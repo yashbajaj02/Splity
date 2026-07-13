@@ -1,0 +1,3 @@
+[install]
+# Skip packages published less than a day ago (supply-chain guard).
+minimumReleaseAge = 86400
