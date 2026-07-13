@@ -1,4 +1,4 @@
-import { Wallet } from "lucide-react";
+import { AppLogo } from "@/components/AppLogo";
 import { ProfileForm } from "@/components/ProfileForm";
 import type { Profile } from "@/lib/app-types";
 
@@ -17,10 +17,8 @@ export function Onboarding({
     <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex items-center justify-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Wallet className="h-5 w-5" />
-          </div>
-          <span className="font-display text-lg font-bold">SplitPay</span>
+          <AppLogo className="h-9 w-9" />
+          <span className="font-display text-lg font-bold">Splity</span>
         </div>
 
         <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">

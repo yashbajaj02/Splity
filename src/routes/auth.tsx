@@ -1,9 +1,10 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Wallet, Loader2, MailCheck } from "lucide-react";
+import { Loader2, MailCheck } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
+import { AppLogo } from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -93,10 +94,8 @@ function AuthPage() {
     <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5 py-10">
       <div className="w-full max-w-sm">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Wallet className="h-5 w-5" />
-          </div>
-          <span className="font-display text-lg font-bold">SplitPay</span>
+          <AppLogo className="h-9 w-9" />
+          <span className="font-display text-lg font-bold">Splity</span>
         </Link>
 
         <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">

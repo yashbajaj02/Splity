@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowRight, QrCode, Users, Wallet, Bell, ShieldCheck } from "lucide-react";
+import { ArrowRight, QrCode, Users, Bell, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
+import { AppLogo } from "@/components/AppLogo";
 
 export const Route = createFileRoute("/")({
   component: Landing,
@@ -21,10 +22,8 @@ function Landing() {
     <div className="min-h-screen bg-app-gradient">
       <header className="mx-auto flex max-w-5xl items-center justify-between px-5 py-5">
         <div className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <Wallet className="h-5 w-5" />
-          </div>
-          <span className="font-display text-lg font-bold">SplitPay</span>
+          <AppLogo className="h-9 w-9" />
+          <span className="font-display text-lg font-bold">Splity</span>
         </div>
         <Button asChild variant="ghost" size="sm">
           <Link to="/auth">Sign in</Link>

@@ -74,30 +74,37 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "SplitPay — Share expenses & settle up instantly with UPI" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { title: "Splity — Smart Expense Sharing" },
       {
         name: "description",
-        content:
-          "Split bills with friends and groups, track who owes what, and settle up instantly by scanning a UPI QR code.",
+        content: "Split expenses with friends, roommates and groups.",
       },
-      { name: "author", content: "SplitPay" },
-      { property: "og:title", content: "SplitPay — Share expenses & settle up with UPI" },
+      { name: "author", content: "Splity" },
+      { name: "theme-color", content: "#16A34A" },
+      { name: "msapplication-TileColor", content: "#16A34A" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "apple-mobile-web-app-title", content: "Splity" },
+      { property: "og:title", content: "Splity — Smart Expense Sharing" },
       {
         property: "og:description",
-        content:
-          "Split bills with friends and groups, track balances, and settle up instantly with UPI QR codes.",
+        content: "Split expenses with friends, roommates and groups.",
       },
       { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@splitpay" },
+      { property: "og:image", content: "/icon-512.png" },
+      { name: "twitter:card", content: "summary" },
+      { name: "twitter:title", content: "Splity" },
+      { name: "twitter:image", content: "/icon-512.png" },
     ],
     links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "stylesheet", href: appCss },
+      { rel: "manifest", href: "/manifest.json" },
+      { rel: "icon", href: "/favicon.ico", sizes: "any" },
+      { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32x32.png" },
+      { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16x16.png" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png", sizes: "180x180" },
     ],
   }),
   shellComponent: RootShell,
@@ -115,6 +122,11 @@ function RootShell({ children }: { children: ReactNode }) {
       <body>
         {children}
         <Scripts />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))}`,
+          }}
+        />
       </body>
     </html>
   );

@@ -1,11 +1,12 @@
 import { createFileRoute, Outlet, useNavigate, Link, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Users, Bell, HandCoins, Wallet, LogOut, User } from "lucide-react";
+import { Loader2, Users, Bell, HandCoins, LogOut, User } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { getProfile, getNotifications } from "@/lib/api";
 import { Onboarding } from "@/components/Onboarding";
+import { AppLogo } from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -114,10 +115,8 @@ function AppLayout() {
       <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
           <Link to="/app" className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Wallet className="h-4 w-4" />
-            </div>
-            <span className="font-display text-base font-bold">SplitPay</span>
+            <AppLogo className="h-8 w-8 rounded-lg" />
+            <span className="font-display text-base font-bold">Splity</span>
           </Link>
           <div className="flex items-center gap-1">
             <Link
