@@ -1,9 +1,6 @@
 export type MemberStatus = "pending" | "accepted";
 export type NotificationType =
-  | "group_invite"
-  | "settlement_request"
-  | "settlement_confirmed"
-  | "expense_added";
+  "group_invite" | "settlement_request" | "settlement_confirmed" | "expense_added";
 export type NotificationStatus = "pending" | "accepted" | "declined" | "read";
 
 export interface Profile {
@@ -64,4 +61,10 @@ export interface AppNotification {
   sender_username: string | null;
   sender_upi: string | null;
   created_at: string;
+}
+
+export interface PairwiseDebt {
+  from: string;
+  to: string;
+  amount: number;
 }

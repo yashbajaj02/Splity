@@ -381,7 +381,13 @@ create policy "expenses_update_owner"
 drop policy if exists "expenses_delete_owner" on public.expenses;
 create policy "expenses_delete_owner"
   on public.expenses for delete to authenticated
-  using (created_by = auth.uid() or public.is_group_admin(group_id, auth.uid()));
+  using (
+    public.is_group_admin(group_id, auth.uid())
+    or (
+      created_by = auth.uid()
+      and created_at >= now() - interval '5 hours'
+    )
+  );
 
 -- ---------- EXPENSE_SPLITS ----------
 drop policy if exists "splits_select_members" on public.expense_splits;

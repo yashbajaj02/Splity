@@ -42,7 +42,7 @@ function AppLayout() {
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
-      .channel(`notif-${userId}`)
+      .channel(`app-sync-${userId}`)
       .on(
         "postgres_changes",
         {
@@ -54,6 +54,41 @@ function AppLayout() {
         () => {
           queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
           queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "expenses",
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "expense_splits",
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "group_members",
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
         },
       )
       .subscribe();
@@ -74,17 +109,11 @@ function AppLayout() {
     return (
       <div className="flex min-h-screen items-center justify-center px-5">
         <div className="max-w-sm text-center">
-          <h1 className="font-display text-xl font-bold">
-            Profile could not load
-          </h1>
+          <h1 className="font-display text-xl font-bold">Profile could not load</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             {(profileQuery.error as Error).message}
           </p>
-          <Button
-            className="mt-5"
-            variant="outline"
-            onClick={() => profileQuery.refetch()}
-          >
+          <Button className="mt-5" variant="outline" onClick={() => profileQuery.refetch()}>
             Try again
           </Button>
         </div>
@@ -106,9 +135,7 @@ function AppLayout() {
     );
   }
 
-  const pendingCount = (notifQuery.data ?? []).filter(
-    (n) => n.status === "pending",
-  ).length;
+  const pendingCount = (notifQuery.data ?? []).filter((n) => n.status === "pending").length;
 
   return (
     <div className="min-h-screen pb-24">
@@ -123,8 +150,7 @@ function AppLayout() {
               to="/app/profile"
               className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
-              <User className="h-4 w-4" />
-              @{profile.username}
+              <User className="h-4 w-4" />@{profile.username}
             </Link>
             <Button
               variant="ghost"
@@ -169,9 +195,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
     <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/90 backdrop-blur">
       <div className="mx-auto flex max-w-2xl items-stretch justify-around px-2 py-1.5">
         {items.map((item) => {
-          const active = item.exact
-            ? pathname === item.to
-            : pathname.startsWith(item.to);
+          const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
           const Icon = item.icon;
           const hasBadge = "badge" in item && !!item.badge;
           return (
@@ -180,9 +204,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
               to={item.to as "/app" | "/app/activity" | "/app/settle"}
               className={cn(
                 "flex flex-1 flex-col items-center gap-1 rounded-lg py-2 text-xs font-medium transition-colors",
-                active
-                  ? "text-primary"
-                  : "text-muted-foreground hover:text-foreground",
+                active ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 hasBadge && !active && "text-warning",
               )}
             >

@@ -5,8 +5,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
 import type { Balance } from "@/hooks/use-settle-balances";
-import { sendSettlementRequest } from "@/lib/api";
-import { formatCurrency } from "@/lib/debt";
+import { sendSettlementRequest, settleByCash } from "@/lib/api";
 import { BalanceSummaryCards } from "@/components/BalanceSummaryCards";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { Button } from "@/components/ui/button";
@@ -38,6 +37,22 @@ function SettlePage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const cashSettlement = useMutation({
+    mutationFn: (v: { groupId: string; payeeId: string; amount: number }) =>
+      settleByCash({
+        groupId: v.groupId,
+        payerId: userId,
+        payeeId: v.payeeId,
+        amount: v.amount,
+      }),
+    onSuccess: () => {
+      toast.success("Cash payment recorded. They were notified.");
+      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   if (query.isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -49,12 +64,8 @@ function SettlePage() {
   if (query.isError) {
     return (
       <div className="space-y-3 py-16 text-center">
-        <h1 className="font-display text-xl font-bold">
-          Balances could not load
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {(query.error as Error).message}
-        </p>
+        <h1 className="font-display text-xl font-bold">Balances could not load</h1>
+        <p className="text-sm text-muted-foreground">{(query.error as Error).message}</p>
         <Button size="sm" variant="outline" onClick={() => query.refetch()}>
           Try again
         </Button>
@@ -85,6 +96,19 @@ function SettlePage() {
               payeeUpiId={b.profile?.upi_id ?? null}
               amount={b.amount}
               note="SplitPay settlement"
+              onCashPaid={() => {
+                if (!b.settlementGroupId) {
+                  toast.error("No shared group found to record this payment.");
+                  return;
+                }
+                cashSettlement.mutate({
+                  groupId: b.settlementGroupId,
+                  payeeId: b.counterpartyId,
+                  amount: b.amount,
+                });
+              }}
+              cashDisabled={!b.settlementGroupId}
+              cashBusy={cashSettlement.isPending}
             />
           </BalanceRow>
         ))}
@@ -97,9 +121,7 @@ function SettlePage() {
               size="sm"
               variant="outline"
               disabled={remind.isPending}
-              onClick={() =>
-                remind.mutate({ debtorId: b.counterpartyId, amount: b.amount })
-              }
+              onClick={() => remind.mutate({ debtorId: b.counterpartyId, amount: b.amount })}
             >
               <Bell className="mr-1.5 h-4 w-4" /> Remind
             </Button>
@@ -119,14 +141,10 @@ function Section({
   empty: string;
   children: React.ReactNode;
 }) {
-  const hasChildren = Array.isArray(children)
-    ? children.length > 0
-    : !!children;
+  const hasChildren = Array.isArray(children) ? children.length > 0 : !!children;
   return (
     <div className="space-y-3">
-      <h2 className="font-display text-sm font-semibold text-muted-foreground">
-        {title}
-      </h2>
+      <h2 className="font-display text-sm font-semibold text-muted-foreground">{title}</h2>
       {hasChildren ? (
         <div className="space-y-2">{children}</div>
       ) : (
@@ -155,11 +173,7 @@ function BalanceRow({
       </div>
       <div className="min-w-0 flex-1">
         <p className="truncate font-semibold">{name}</p>
-        <p
-          className={`text-sm font-medium ${
-            negative ? "text-destructive" : "text-success"
-          }`}
-        >
+        <p className={`text-sm font-medium ${negative ? "text-destructive" : "text-success"}`}>
           <CountUpCurrency amount={b.amount} />
         </p>
       </div>

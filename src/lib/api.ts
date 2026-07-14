@@ -8,6 +8,16 @@ import type {
   Profile,
 } from "./app-types";
 
+const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
+
+function buildExpenseAddedMessage(opts: {
+  description: string;
+  groupName: string;
+  paidByName: string;
+}) {
+  return `added "${opts.description}" in "${opts.groupName}" (paid by ${opts.paidByName})`;
+}
+
 /* ------------------------------- PROFILES ------------------------------- */
 
 export async function getProfile(userId: string): Promise<Profile | null> {
@@ -91,11 +101,7 @@ export async function createGroup(
 }
 
 export async function getGroup(groupId: string): Promise<Group | null> {
-  const { data, error } = await supabase
-    .from("groups")
-    .select("*")
-    .eq("id", groupId)
-    .maybeSingle();
+  const { data, error } = await supabase.from("groups").select("*").eq("id", groupId).maybeSingle();
   if (error) throw error;
   return data as Group | null;
 }
@@ -117,36 +123,25 @@ export async function deleteGroup(groupId: string) {
 /* ---------------------------- GROUP MEMBERS ----------------------------- */
 
 export async function getGroupMembers(groupId: string): Promise<GroupMember[]> {
-  const { data, error } = await supabase
-    .from("group_members")
-    .select("*")
-    .eq("group_id", groupId);
+  const { data, error } = await supabase.from("group_members").select("*").eq("group_id", groupId);
   if (error) throw error;
   return (data ?? []) as GroupMember[];
 }
 
 export async function getProfilesByIds(ids: string[]): Promise<Profile[]> {
   if (ids.length === 0) return [];
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .in("id", ids);
+  const { data, error } = await supabase.from("profiles").select("*").in("id", ids);
   if (error) throw error;
   return (data ?? []) as Profile[];
 }
 
-export async function getNotificationSenderProfiles(
-  senderIds: string[],
-): Promise<Profile[]> {
+export async function getNotificationSenderProfiles(senderIds: string[]): Promise<Profile[]> {
   if (senderIds.length === 0) return [];
-  const { data, error } = await supabase.rpc(
-    "get_notification_sender_profiles",
-    { _sender_ids: senderIds },
-  );
+  const { data, error } = await supabase.rpc("get_notification_sender_profiles", {
+    _sender_ids: senderIds,
+  });
   if (!error && data) {
-    return (
-      data as Pick<Profile, "id" | "username" | "full_name" | "upi_id">[]
-    ).map((p) => ({
+    return (data as Pick<Profile, "id" | "username" | "full_name" | "upi_id">[]).map((p) => ({
       ...p,
       email: null,
       avatar_url: null,
@@ -240,9 +235,17 @@ export async function getGroupExpenses(groupId: string): Promise<Expense[]> {
   return (data ?? []) as Expense[];
 }
 
-export async function getSplitsForExpenses(
-  expenseIds: string[],
-): Promise<ExpenseSplit[]> {
+export async function getExpense(expenseId: string): Promise<Expense | null> {
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("*")
+    .eq("id", expenseId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as Expense | null;
+}
+
+export async function getSplitsForExpenses(expenseIds: string[]): Promise<ExpenseSplit[]> {
   if (expenseIds.length === 0) return [];
   const { data, error } = await supabase
     .from("expense_splits")
@@ -260,6 +263,13 @@ export async function addExpense(opts: {
   amount: number;
   splits: { userId: string; amount: number }[];
 }) {
+  const [group, creator, payer, members] = await Promise.all([
+    getGroup(opts.groupId),
+    getProfile(opts.createdBy),
+    getProfile(opts.paidBy),
+    getGroupMembers(opts.groupId),
+  ]);
+
   const { data, error } = await supabase
     .from("expenses")
     .insert({
@@ -281,14 +291,130 @@ export async function addExpense(opts: {
   }));
   const { error: sErr } = await supabase.from("expense_splits").insert(rows);
   if (sErr) throw sErr;
+
+  const recipients = members
+    .filter((member) => member.status === "accepted" && member.user_id !== opts.createdBy)
+    .map((member) => member.user_id);
+
+  if (recipients.length > 0) {
+    const paidByName =
+      opts.paidBy === opts.createdBy
+        ? creator?.username
+          ? `@${creator.username}`
+          : "the sender"
+        : payer?.username
+          ? `@${payer.username}`
+          : "someone else";
+
+    const notificationRows = recipients.map((recipientId) => ({
+      recipient_id: recipientId,
+      sender_id: opts.createdBy,
+      type: "expense_added" as const,
+      status: "pending" as const,
+      group_id: opts.groupId,
+      amount: opts.amount,
+      message: buildExpenseAddedMessage({
+        description: opts.description,
+        groupName: group?.name ?? "your group",
+        paidByName,
+      }),
+      sender_username: creator?.username ?? null,
+      sender_upi: creator?.upi_id ?? null,
+    }));
+
+    let { error: notificationError } = await supabase
+      .from("notifications")
+      .insert(notificationRows);
+
+    if (notificationError && /sender_username|column/i.test(notificationError.message)) {
+      const fallbackRows = notificationRows.map(
+        ({ recipient_id, sender_id, type, status, group_id, amount, message }) => ({
+          recipient_id,
+          sender_id,
+          type,
+          status,
+          group_id,
+          amount,
+          message,
+        }),
+      );
+      ({ error: notificationError } = await supabase.from("notifications").insert(fallbackRows));
+    }
+    if (notificationError) throw notificationError;
+  }
+
+  return expense;
+}
+
+export async function deleteExpense(expenseId: string, userId: string) {
+  const expense = await getExpense(expenseId);
+  if (!expense) throw new Error("Expense not found.");
+  if (expense.created_by !== userId) {
+    throw new Error("Only the person who added this expense can remove it.");
+  }
+
+  const ageMs = Date.now() - new Date(expense.created_at).getTime();
+  if (ageMs > EXPENSE_DELETE_WINDOW_MS) {
+    throw new Error("This expense can only be removed within 5 hours.");
+  }
+
+  const { error } = await supabase.from("expenses").delete().eq("id", expenseId);
+  if (error) throw error;
+}
+
+export function canDeleteExpense(expense: Expense, userId: string, now = Date.now()) {
+  if (expense.created_by !== userId) return false;
+  return now - new Date(expense.created_at).getTime() <= EXPENSE_DELETE_WINDOW_MS;
+}
+
+export async function settleByCash(opts: {
+  groupId: string;
+  payerId: string;
+  payeeId: string;
+  amount: number;
+}) {
+  const payer = await getProfile(opts.payerId);
+  const expense = await addExpense({
+    groupId: opts.groupId,
+    createdBy: opts.payerId,
+    paidBy: opts.payerId,
+    description: "Cash settlement",
+    amount: opts.amount,
+    splits: [{ userId: opts.payeeId, amount: opts.amount }],
+  });
+
+  const row = {
+    recipient_id: opts.payeeId,
+    sender_id: opts.payerId,
+    type: "settlement_confirmed" as const,
+    status: "pending" as const,
+    group_id: opts.groupId,
+    amount: opts.amount,
+    message: "paid you by cash",
+    sender_username: payer?.username ?? null,
+    sender_upi: payer?.upi_id ?? null,
+  };
+  let { error } = await supabase.from("notifications").insert(row);
+  if (error && /sender_username|column/i.test(error.message)) {
+    const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+    ({ error } = await supabase.from("notifications").insert({
+      recipient_id,
+      sender_id,
+      type,
+      status,
+      group_id,
+      amount,
+      message,
+    }));
+  }
+  if (error) throw error;
+
   return expense;
 }
 
 /* ----------------------------- NOTIFICATIONS ---------------------------- */
 
-export async function getNotifications(
-  userId: string,
-): Promise<AppNotification[]> {
+export async function getNotifications(userId: string): Promise<AppNotification[]> {
   const { data, error } = await supabase
     .from("notifications")
     .select("*")
@@ -331,10 +457,7 @@ export async function sendSettlementRequest(opts: {
 }
 
 export async function markNotificationRead(id: string) {
-  const { error } = await supabase
-    .from("notifications")
-    .update({ status: "read" })
-    .eq("id", id);
+  const { error } = await supabase.from("notifications").update({ status: "read" }).eq("id", id);
   if (error) throw error;
 }
 

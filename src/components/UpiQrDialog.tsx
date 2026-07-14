@@ -1,5 +1,5 @@
 import { QRCodeSVG } from "qrcode.react";
-import { QrCode } from "lucide-react";
+import { Banknote, Loader2, QrCode } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -18,17 +18,21 @@ export function UpiQrDialog({
   amount,
   note,
   trigger,
+  onCashPaid,
+  cashDisabled,
+  cashBusy,
 }: {
   payeeName: string;
   payeeUpiId: string | null;
   amount: number;
   note?: string;
   trigger?: React.ReactNode;
+  onCashPaid?: () => void;
+  cashDisabled?: boolean;
+  cashBusy?: boolean;
 }) {
   const hasUpi = !!payeeUpiId;
-  const uri = hasUpi
-    ? buildUpiUri({ payeeUpiId: payeeUpiId!, payeeName, amount, note })
-    : "";
+  const uri = hasUpi ? buildUpiUri({ payeeUpiId: payeeUpiId!, payeeName, amount, note }) : "";
 
   return (
     <Dialog>
@@ -65,12 +69,44 @@ export function UpiQrDialog({
             <a href={uri} className="w-full">
               <Button className="w-full">Open in UPI app</Button>
             </a>
+            {onCashPaid && (
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={onCashPaid}
+                disabled={cashDisabled || cashBusy}
+              >
+                {cashBusy ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Banknote className="mr-1.5 h-4 w-4" />
+                )}
+                Paid by cash
+              </Button>
+            )}
           </div>
         ) : (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            {payeeName} hasn't added a UPI ID yet. Ask them to update their
-            profile — the QR pays <strong>them</strong>, not you.
-          </p>
+          <div className="space-y-4 py-6">
+            <p className="text-center text-sm text-muted-foreground">
+              {payeeName} hasn't added a UPI ID yet. Ask them to update their profile, or mark it
+              paid if you settled directly.
+            </p>
+            {onCashPaid && (
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={onCashPaid}
+                disabled={cashDisabled || cashBusy}
+              >
+                {cashBusy ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Banknote className="mr-1.5 h-4 w-4" />
+                )}
+                Paid by cash
+              </Button>
+            )}
+          </div>
         )}
       </DialogContent>
     </Dialog>

@@ -1,49 +1,32 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import {
-  Loader2,
-  ArrowLeft,
-  UserPlus,
-  Receipt,
-  Clock,
-  QrCode,
-  LogOut,
-  Trash2,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Clock, Loader2, LogOut, QrCode, Receipt, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
-  getGroup,
-  getGroupMembers,
-  getGroupExpenses,
-  getSplitsForExpenses,
-  getProfilesByIds,
+  canDeleteExpense,
+  deleteExpense,
+  deleteGroup,
   findUserByUsername,
+  getGroup,
+  getGroupExpenses,
+  getGroupMembers,
+  getProfilesByIds,
+  getSplitsForExpenses,
   inviteToGroup,
   leaveGroup,
-  deleteGroup,
+  settleByCash,
 } from "@/lib/api";
-import type { ExpenseSplit, Profile } from "@/lib/app-types";
-import {
-  computeNetBalances,
-  simplifyDebts,
-  formatCurrency,
-} from "@/lib/debt";
+import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
+import { computePairwiseDebts } from "@/lib/debt";
+import { supabase } from "@/lib/supabase";
 import { AddExpenseDialog } from "@/components/AddExpenseDialog";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { UpiQrDialog } from "@/components/UpiQrDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,6 +38,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 export const Route = createFileRoute("/app/group/$groupId")({
   component: GroupDetail,
@@ -80,27 +71,56 @@ function GroupDetail() {
     queryFn: () => getGroupExpenses(groupId),
   });
 
-  const memberIds = (membersQuery.data ?? []).map((m) => m.user_id);
+  const memberIds = (membersQuery.data ?? []).map((member) => member.user_id);
   const profilesQuery = useQuery({
     queryKey: ["profiles", memberIds.sort().join(",")],
     queryFn: () => getProfilesByIds(memberIds),
     enabled: memberIds.length > 0,
   });
-  const pmap = new Map<string, Profile>(
-    (profilesQuery.data ?? []).map((p) => [p.id, p]),
+
+  const profileMap = new Map<string, Profile>(
+    (profilesQuery.data ?? []).map((profile) => [profile.id, profile]),
   );
   const nameOf = (id: string) => {
     if (id === userId) return "You";
-    const p = pmap.get(id);
-    return p?.username ? `@${p.username}` : "user";
+    const profile = profileMap.get(id);
+    return profile?.username ? `@${profile.username}` : "user";
   };
 
-  const expenseIds = (expensesQuery.data ?? []).map((e) => e.id);
+  const expenseIds = (expensesQuery.data ?? []).map((expense) => expense.id);
   const splitsQuery = useQuery({
     queryKey: ["group-splits", groupId, expenseIds.join(",")],
     queryFn: () => getSplitsForExpenses(expenseIds),
     enabled: expenseIds.length > 0,
   });
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`group-live-${groupId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "expenses", filter: `group_id=eq.${groupId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
+          queryClient.invalidateQueries({ queryKey: ["group-splits", groupId] });
+          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "group_members", filter: `group_id=eq.${groupId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["group-members", groupId] });
+          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [groupId, queryClient, userId]);
 
   const leaveMutation = useMutation({
     mutationFn: () => leaveGroup(groupId, userId),
@@ -109,7 +129,7 @@ function GroupDetail() {
       queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
       navigate({ to: "/app" });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteMutation = useMutation({
@@ -119,7 +139,34 @@ function GroupDetail() {
       queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
       navigate({ to: "/app" });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const removeExpenseMutation = useMutation({
+    mutationFn: (expenseId: string) => deleteExpense(expenseId, userId),
+    onSuccess: () => {
+      toast.success("Expense removed");
+      queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["group-splits", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const cashSettlement = useMutation({
+    mutationFn: (values: { payeeId: string; amount: number }) =>
+      settleByCash({
+        groupId,
+        payerId: userId,
+        payeeId: values.payeeId,
+        amount: values.amount,
+      }),
+    onSuccess: () => {
+      toast.success("Cash payment recorded. They were notified.");
+      queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   if (groupQuery.isLoading) {
@@ -129,160 +176,138 @@ function GroupDetail() {
       </div>
     );
   }
+
   if (groupQuery.isError) {
     return (
       <div className="space-y-3 py-16 text-center">
-        <p className="text-sm font-medium text-foreground">
-          Could not load this group.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          {(groupQuery.error as Error).message}
-        </p>
+        <p className="text-sm font-medium text-foreground">Could not load this group.</p>
+        <p className="text-sm text-muted-foreground">{(groupQuery.error as Error).message}</p>
         <Button variant="outline" size="sm" onClick={() => groupQuery.refetch()}>
           Try again
         </Button>
       </div>
     );
   }
+
   if (!groupQuery.data) {
-    return (
-      <div className="py-16 text-center text-sm text-muted-foreground">
-        Group not found.
-      </div>
-    );
+    return <div className="py-16 text-center text-sm text-muted-foreground">Group not found.</div>;
   }
 
   const group = groupQuery.data;
   const members = membersQuery.data ?? [];
-  const acceptedMembers = members.filter((m) => m.status === "accepted");
-  const pendingMembers = members.filter((m) => m.status === "pending");
+  const acceptedMembers = members.filter((member) => member.status === "accepted");
+  const pendingMembers = members.filter((member) => member.status === "pending");
   const expenses = expensesQuery.data ?? [];
-
-  // Simplified balances within the group.
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
-  for (const s of splitsQuery.data ?? []) {
-    (splitsByExpense[s.expense_id] ??= []).push(s);
+  for (const split of splitsQuery.data ?? []) {
+    (splitsByExpense[split.expense_id] ??= []).push(split);
   }
-  const balances = computeNetBalances(expenses, splitsByExpense);
-  const simplified = simplifyDebts(balances);
+  const pairwiseDebts = computePairwiseDebts(expenses, splitsByExpense);
   const isCreator = group.created_by === userId;
-  const isMember = acceptedMembers.some((m) => m.user_id === userId);
+  const isMember = acceptedMembers.some((member) => member.user_id === userId);
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="space-y-3">
         <Link
           to="/app"
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" /> Groups
         </Link>
-        <h1 className="mt-2 font-display text-2xl font-bold">{group.name}</h1>
-        {group.description && (
-          <p className="text-sm text-muted-foreground">{group.description}</p>
-        )}
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="font-display text-2xl font-bold">{group.name}</h1>
+            {group.description ? (
+              <p className="text-sm text-muted-foreground">{group.description}</p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2">
+            {isMember && !isCreator ? (
+              <LeaveGroupButton
+                groupName={group.name}
+                busy={leaveMutation.isPending}
+                onLeave={() => leaveMutation.mutate()}
+              />
+            ) : null}
+            {isCreator ? (
+              <DeleteGroupButton
+                groupName={group.name}
+                busy={deleteMutation.isPending}
+                onDelete={() => deleteMutation.mutate()}
+              />
+            ) : null}
+          </div>
+        </div>
       </div>
 
-      {/* Members */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-sm font-semibold text-muted-foreground">
             Members ({acceptedMembers.length})
           </h2>
-          <InviteDialog
-            groupId={groupId}
-            groupName={group.name}
-            inviterId={userId}
-          />
+          <InviteDialog groupId={groupId} groupName={group.name} inviterId={userId} />
         </div>
         <div className="flex flex-wrap gap-2">
-          {acceptedMembers.map((m) => (
+          {acceptedMembers.map((member) => (
             <span
-              key={m.id}
+              key={member.id}
               className="rounded-full bg-secondary px-3 py-1 text-sm font-medium text-primary"
             >
-              {nameOf(m.user_id)}
+              {nameOf(member.user_id)}
             </span>
           ))}
-          {pendingMembers.map((m) => (
+          {pendingMembers.map((member) => (
             <span
-              key={m.id}
+              key={member.id}
               className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-sm text-muted-foreground"
             >
-              <Clock className="h-3 w-3" /> {nameOf(m.user_id)}
+              <Clock className="h-3 w-3" /> {nameOf(member.user_id)}
             </span>
           ))}
         </div>
       </section>
 
-      {/* Balances */}
       <section className="space-y-3">
-        <h2 className="font-display text-sm font-semibold text-muted-foreground">
-          Who owes whom
-        </h2>
-        {simplified.length === 0 ? (
+        <h2 className="font-display text-sm font-semibold text-muted-foreground">Who owes whom</h2>
+        {pairwiseDebts.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
             Everyone's settled up.
           </p>
         ) : (
           <div className="space-y-2">
-            {simplified.map((d, idx) => {
-              const creditor = pmap.get(d.to);
-              const debtText =
-                d.from === userId
-                  ? `You owe ${nameOf(d.to)}`
-                  : d.to === userId
-                    ? `${nameOf(d.from)} owes you`
-                    : `${nameOf(d.from)} owes ${nameOf(d.to)}`;
-              return (
-                <div
-                  key={idx}
-                  className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm"
-                >
-                  <div className="min-w-0 flex-1 text-sm">
-                    <span className="font-semibold">{debtText}</span>
-                    <span className="ml-1 font-display font-bold text-primary">
-                      <CountUpCurrency amount={d.amount} />
-                    </span>
-                  </div>
-                  {d.from === userId && (
-                    <UpiQrDialog
-                      payeeName={nameOf(d.to)}
-                      payeeUpiId={creditor?.upi_id ?? null}
-                      amount={d.amount}
-                      note={`SplitPay · ${group.name}`}
-                      trigger={
-                        <Button size="sm">
-                          <QrCode className="mr-1.5 h-4 w-4" /> Pay
-                        </Button>
-                      }
-                    />
-                  )}
-                </div>
-              );
-            })}
+            {pairwiseDebts.map((debt) => (
+              <DebtRow
+                key={`${debt.from}-${debt.to}`}
+                debt={debt}
+                userId={userId}
+                nameOf={nameOf}
+                payeeUpiId={profileMap.get(debt.to)?.upi_id ?? null}
+                cashBusy={cashSettlement.isPending}
+                onCashPaid={() =>
+                  cashSettlement.mutate({
+                    payeeId: debt.to,
+                    amount: debt.amount,
+                  })
+                }
+                groupName={group.name}
+              />
+            ))}
           </div>
         )}
       </section>
 
-      {/* Expenses */}
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-sm font-semibold text-muted-foreground">
-            Expenses
-          </h2>
+          <h2 className="font-display text-sm font-semibold text-muted-foreground">Expenses</h2>
           <AddExpenseDialog
             groupId={groupId}
             userId={userId}
-            members={acceptedMembers.map((m) => ({
-              id: m.user_id,
-              name: nameOf(m.user_id),
+            members={acceptedMembers.map((member) => ({
+              id: member.user_id,
+              name: nameOf(member.user_id),
             }))}
-            trigger={
-              <Button size="sm">
-                Add expense
-              </Button>
-            }
+            trigger={<Button size="sm">Add expense</Button>}
           />
         </div>
         {expenses.length === 0 ? (
@@ -291,95 +316,214 @@ function GroupDetail() {
           </p>
         ) : (
           <div className="space-y-2">
-            {expenses.map((e) => (
-              <div
-                key={e.id}
-                className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm"
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-                  <Receipt className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-semibold">{e.description}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {nameOf(e.paid_by)} paid ·{" "}
-                    {new Date(e.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <p className="font-display font-bold">
-                  <CountUpCurrency amount={Number(e.amount)} />
-                </p>
-              </div>
+            {expenses.map((expense) => (
+              <ExpenseRow
+                key={expense.id}
+                expense={expense}
+                currentUserId={userId}
+                creatorName={nameOf(expense.created_by)}
+                payerName={nameOf(expense.paid_by)}
+                canRemove={canDeleteExpense(expense, userId)}
+                removeBusy={removeExpenseMutation.isPending}
+                onRemove={() => removeExpenseMutation.mutate(expense.id)}
+              />
             ))}
           </div>
         )}
       </section>
-
-      {(isMember || isCreator) && (
-        <section className="space-y-3 border-t border-border pt-4">
-          <h2 className="font-display text-sm font-semibold text-muted-foreground">
-            Group settings
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {isMember && !isCreator && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <LogOut className="mr-1.5 h-4 w-4" /> Leave group
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Leave this group?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      You won't see expenses or balances for "{group.name}"
-                      anymore. You can be re-invited later.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={() => leaveMutation.mutate()}
-                      disabled={leaveMutation.isPending}
-                    >
-                      Leave
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-            {isCreator && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="destructive" size="sm">
-                    <Trash2 className="mr-1.5 h-4 w-4" /> Delete group
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete "{group.name}"?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This permanently deletes the group, all expenses, and
-                      member data. This cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      onClick={() => deleteMutation.mutate()}
-                      disabled={deleteMutation.isPending}
-                    >
-                      Delete
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
-          </div>
-        </section>
-      )}
     </div>
+  );
+}
+
+function DebtRow({
+  debt,
+  userId,
+  nameOf,
+  payeeUpiId,
+  cashBusy,
+  onCashPaid,
+  groupName,
+}: {
+  debt: PairwiseDebt;
+  userId: string;
+  nameOf: (id: string) => string;
+  payeeUpiId: string | null;
+  cashBusy: boolean;
+  onCashPaid: () => void;
+  groupName: string;
+}) {
+  const debtText =
+    debt.from === userId
+      ? `You owe ${nameOf(debt.to)}`
+      : debt.to === userId
+        ? `${nameOf(debt.from)} owes you`
+        : `${nameOf(debt.from)} owes ${nameOf(debt.to)}`;
+
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="min-w-0 flex-1 text-sm">
+        <span className="font-semibold">{debtText}</span>
+        <span className="ml-1 font-display font-bold text-primary">
+          <CountUpCurrency amount={debt.amount} />
+        </span>
+      </div>
+      {debt.from === userId ? (
+        <UpiQrDialog
+          payeeName={nameOf(debt.to)}
+          payeeUpiId={payeeUpiId}
+          amount={debt.amount}
+          note={`SplitPay - ${groupName}`}
+          onCashPaid={onCashPaid}
+          cashBusy={cashBusy}
+          trigger={
+            <Button size="sm">
+              <QrCode className="mr-1.5 h-4 w-4" /> Pay
+            </Button>
+          }
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ExpenseRow({
+  expense,
+  currentUserId,
+  creatorName,
+  payerName,
+  canRemove,
+  removeBusy,
+  onRemove,
+}: {
+  expense: Expense;
+  currentUserId: string;
+  creatorName: string;
+  payerName: string;
+  canRemove: boolean;
+  removeBusy: boolean;
+  onRemove: () => void;
+}) {
+  const youAddedThis = expense.created_by === currentUserId;
+
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+        <Receipt className="h-5 w-5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-semibold">{expense.description}</p>
+        <p className="text-xs text-muted-foreground">
+          {creatorName} added · {payerName} paid · {new Date(expense.created_at).toLocaleString()}
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <p className="font-display font-bold">
+          <CountUpCurrency amount={Number(expense.amount)} />
+        </p>
+        {youAddedThis ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={!canRemove || removeBusy}
+                aria-label="Remove expense"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove this expense?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  You can remove an expense only within 5 hours of adding it.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={onRemove} disabled={removeBusy}>
+                  Remove
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LeaveGroupButton({
+  groupName,
+  busy,
+  onLeave,
+}: {
+  groupName: string;
+  busy: boolean;
+  onLeave: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <LogOut className="mr-1.5 h-4 w-4" /> Leave
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Leave this group?</AlertDialogTitle>
+          <AlertDialogDescription>
+            You won't see expenses or balances for "{groupName}" anymore. You can be re-invited
+            later.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onLeave} disabled={busy}>
+            Leave
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function DeleteGroupButton({
+  groupName,
+  busy,
+  onDelete,
+}: {
+  groupName: string;
+  busy: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive" size="sm">
+          <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete "{groupName}"?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes the group, all expenses, and member data. This cannot be
+            undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={onDelete}
+            disabled={busy}
+          >
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -400,8 +544,7 @@ function InviteDialog({
     mutationFn: async () => {
       const user = await findUserByUsername(username.trim().toLowerCase());
       if (!user) throw new Error("No user found with that username.");
-      if (user.id === inviterId)
-        throw new Error("You're already in this group.");
+      if (user.id === inviterId) throw new Error("You're already in this group.");
       await inviteToGroup({
         groupId,
         groupName,
@@ -415,7 +558,7 @@ function InviteDialog({
       setOpen(false);
       setUsername("");
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   return (
@@ -431,8 +574,8 @@ function InviteDialog({
         </DialogHeader>
         <form
           className="space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault();
+          onSubmit={(event) => {
+            event.preventDefault();
             if (!username.trim()) return;
             mutation.mutate();
           }}
@@ -441,7 +584,7 @@ function InviteDialog({
             <Label>Username</Label>
             <Input
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(event) => setUsername(event.target.value)}
               placeholder="friend_username"
               autoCapitalize="none"
               required
@@ -449,9 +592,7 @@ function InviteDialog({
           </div>
           <DialogFooter>
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Send invite
             </Button>
           </DialogFooter>
