@@ -4,6 +4,7 @@ import { Bell, Check, CheckCheck, HandCoins, Loader2, UserPlus, X } from "lucide
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
+  dismissAllNotifications,
   dismissNotification,
   getNotifications,
   getNotificationSenderProfiles,
@@ -70,6 +71,15 @@ function ActivityPage() {
     onSuccess: invalidate,
   });
 
+  const dismissAll = useMutation({
+    mutationFn: () => dismissAllNotifications(userId),
+    onSuccess: () => {
+      toast.success("All notifications dismissed");
+      invalidate();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const markRead = useMutation({
     mutationFn: (notificationId: string) => markNotificationRead(notificationId),
     onSuccess: () => {
@@ -89,9 +99,8 @@ function ActivityPage() {
   });
 
   const notifications = notifQuery.data ?? [];
-  const pendingSettlementCount = notifications.filter(
-    (notification) =>
-      notification.status === "pending" && notification.type === "settlement_request",
+  const pendingCount = notifications.filter(
+    (notification) => notification.status === "pending",
   ).length;
 
   return (
@@ -103,16 +112,29 @@ function ActivityPage() {
             Group invites, expense updates, and settlement requests.
           </p>
         </div>
-        {pendingSettlementCount > 0 ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={markAllRead.isPending}
-            onClick={() => markAllRead.mutate()}
-          >
-            <CheckCheck className="mr-1.5 h-4 w-4" />
-            Mark requests read
-          </Button>
+        {notifications.length > 0 ? (
+          <div className="flex flex-wrap justify-end gap-2">
+            {pendingCount > 0 ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={markAllRead.isPending}
+                onClick={() => markAllRead.mutate()}
+              >
+                <CheckCheck className="mr-1.5 h-4 w-4" />
+                Mark all read
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={dismissAll.isPending}
+              onClick={() => dismissAll.mutate()}
+            >
+              <X className="mr-1.5 h-4 w-4" />
+              Dismiss all
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -236,11 +258,11 @@ function NotificationCard({
               </>
             ) : isSettlementConfirmed && notification.amount != null ? (
               <>
-                marked{" "}
+                confirmed{" "}
                 <strong>
                   <CountUpCurrency amount={Number(notification.amount)} />
                 </strong>{" "}
-                as paid by cash.
+                {notification.message ?? "as paid."}
               </>
             ) : (
               notification.message

@@ -412,6 +412,51 @@ export async function settleByCash(opts: {
   return expense;
 }
 
+export async function settleByUpi(opts: {
+  groupId: string;
+  payerId: string;
+  payeeId: string;
+  amount: number;
+}) {
+  const payer = await getProfile(opts.payerId);
+  const expense = await addExpense({
+    groupId: opts.groupId,
+    createdBy: opts.payerId,
+    paidBy: opts.payerId,
+    description: "UPI settlement",
+    amount: opts.amount,
+    splits: [{ userId: opts.payeeId, amount: opts.amount }],
+  });
+
+  const row = {
+    recipient_id: opts.payeeId,
+    sender_id: opts.payerId,
+    type: "settlement_confirmed" as const,
+    status: "pending" as const,
+    group_id: opts.groupId,
+    amount: opts.amount,
+    message: "paid you online via UPI",
+    sender_username: payer?.username ?? null,
+    sender_upi: payer?.upi_id ?? null,
+  };
+  let { error } = await supabase.from("notifications").insert(row);
+  if (error && /sender_username|column/i.test(error.message)) {
+    const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+    ({ error } = await supabase.from("notifications").insert({
+      recipient_id,
+      sender_id,
+      type,
+      status,
+      group_id,
+      amount,
+      message,
+    }));
+  }
+  if (error) throw error;
+
+  return expense;
+}
+
 /* ----------------------------- NOTIFICATIONS ---------------------------- */
 
 export async function getNotifications(userId: string): Promise<AppNotification[]> {
@@ -466,12 +511,16 @@ export async function markAllNotificationsRead(userId: string) {
     .from("notifications")
     .update({ status: "read" })
     .eq("recipient_id", userId)
-    .eq("status", "pending")
-    .eq("type", "settlement_request");
+    .eq("status", "pending");
   if (error) throw error;
 }
 
 export async function dismissNotification(id: string) {
   const { error } = await supabase.from("notifications").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function dismissAllNotifications(userId: string) {
+  const { error } = await supabase.from("notifications").delete().eq("recipient_id", userId);
   if (error) throw error;
 }

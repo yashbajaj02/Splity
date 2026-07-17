@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
 import type { Balance } from "@/hooks/use-settle-balances";
-import { sendSettlementRequest, settleByCash } from "@/lib/api";
+import { sendSettlementRequest, settleByCash, settleByUpi } from "@/lib/api";
 import { BalanceSummaryCards } from "@/components/BalanceSummaryCards";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,22 @@ function SettlePage() {
       }),
     onSuccess: () => {
       toast.success("Cash payment recorded. They were notified.");
+      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const upiSettlement = useMutation({
+    mutationFn: (v: { groupId: string; payeeId: string; amount: number }) =>
+      settleByUpi({
+        groupId: v.groupId,
+        payerId: userId,
+        payeeId: v.payeeId,
+        amount: v.amount,
+      }),
+    onSuccess: (_data, values) => {
+      toast.success(`Payment of Rs ${values.amount.toFixed(2)} settled.`);
       queryClient.invalidateQueries({ queryKey: ["settle", userId] });
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
@@ -109,6 +125,18 @@ function SettlePage() {
               }}
               cashDisabled={!b.settlementGroupId}
               cashBusy={cashSettlement.isPending}
+              onUpiPaid={() => {
+                if (!b.settlementGroupId) {
+                  toast.error("No shared group found to record this payment.");
+                  return;
+                }
+                upiSettlement.mutate({
+                  groupId: b.settlementGroupId,
+                  payeeId: b.counterpartyId,
+                  amount: b.amount,
+                });
+              }}
+              upiBusy={upiSettlement.isPending}
             />
           </BalanceRow>
         ))}

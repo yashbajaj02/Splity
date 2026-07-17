@@ -1,11 +1,12 @@
+import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Banknote, Loader2, QrCode } from "lucide-react";
+import { Banknote, CheckCircle2, Loader2, QrCode, XCircle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,8 @@ export function UpiQrDialog({
   onCashPaid,
   cashDisabled,
   cashBusy,
+  onUpiPaid,
+  upiBusy,
 }: {
   payeeName: string;
   payeeUpiId: string | null;
@@ -30,12 +33,36 @@ export function UpiQrDialog({
   onCashPaid?: () => void;
   cashDisabled?: boolean;
   cashBusy?: boolean;
+  onUpiPaid?: () => void;
+  upiBusy?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const hasUpi = !!payeeUpiId;
   const uri = hasUpi ? buildUpiUri({ payeeUpiId: payeeUpiId!, payeeName, amount, note }) : "";
 
+  const launchUpiApp = () => {
+    setAwaitingConfirmation(true);
+    window.location.href = uri;
+  };
+
+  const markFailed = () => {
+    setAwaitingConfirmation(false);
+  };
+
+  const markPaid = () => {
+    if (!onUpiPaid) return;
+    onUpiPaid();
+  };
+
   return (
-    <Dialog>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setAwaitingConfirmation(false);
+      }}
+    >
       <DialogTrigger asChild>
         {trigger ?? (
           <Button size="sm">
@@ -66,15 +93,40 @@ export function UpiQrDialog({
               </p>
               <p className="text-sm text-muted-foreground">to {payeeUpiId}</p>
             </div>
-            <a href={uri} className="w-full">
-              <Button className="w-full">Open in UPI app</Button>
-            </a>
-            {onCashPaid && (
+            {!awaitingConfirmation ? (
+              <Button className="w-full" onClick={launchUpiApp}>
+                Open in UPI app
+              </Button>
+            ) : (
+              <div className="w-full space-y-2">
+                <p className="text-center text-sm text-muted-foreground">
+                  After returning to Splity, confirm whether the payment worked.
+                </p>
+                <Button className="w-full" onClick={markPaid} disabled={upiBusy}>
+                  {upiBusy ? (
+                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                  )}
+                  Paid
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={markFailed}
+                  disabled={upiBusy}
+                >
+                  <XCircle className="mr-1.5 h-4 w-4" />
+                  Failed
+                </Button>
+              </div>
+            )}
+            {onCashPaid ? (
               <Button
                 className="w-full"
                 variant="outline"
                 onClick={onCashPaid}
-                disabled={cashDisabled || cashBusy}
+                disabled={cashDisabled || cashBusy || upiBusy}
               >
                 {cashBusy ? (
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
@@ -83,7 +135,7 @@ export function UpiQrDialog({
                 )}
                 Paid by cash
               </Button>
-            )}
+            ) : null}
           </div>
         ) : (
           <div className="space-y-4 py-6">
@@ -91,7 +143,7 @@ export function UpiQrDialog({
               {payeeName} hasn't added a UPI ID yet. Ask them to update their profile, or mark it
               paid if you settled directly.
             </p>
-            {onCashPaid && (
+            {onCashPaid ? (
               <Button
                 className="w-full"
                 variant="outline"
@@ -105,7 +157,7 @@ export function UpiQrDialog({
                 )}
                 Paid by cash
               </Button>
-            )}
+            ) : null}
           </div>
         )}
       </DialogContent>

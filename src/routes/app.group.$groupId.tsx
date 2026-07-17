@@ -17,6 +17,7 @@ import {
   inviteToGroup,
   leaveGroup,
   settleByCash,
+  settleByUpi,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
@@ -57,6 +58,9 @@ function GroupDetail() {
   const userId = session!.user.id;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [visibleExpenseCount, setVisibleExpenseCount] = useState(5);
 
   const groupQuery = useQuery({
     queryKey: ["group", groupId],
@@ -169,6 +173,23 @@ function GroupDetail() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const upiSettlement = useMutation({
+    mutationFn: (values: { payeeId: string; amount: number }) =>
+      settleByUpi({
+        groupId,
+        payerId: userId,
+        payeeId: values.payeeId,
+        amount: values.amount,
+      }),
+    onSuccess: (_data, values) => {
+      toast.success(`Payment of Rs ${values.amount.toFixed(2)} settled.`);
+      queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   if (groupQuery.isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -198,11 +219,20 @@ function GroupDetail() {
   const acceptedMembers = members.filter((member) => member.status === "accepted");
   const pendingMembers = members.filter((member) => member.status === "pending");
   const expenses = expensesQuery.data ?? [];
+  const filteredExpenses = expenses.filter((expense) => {
+    const expenseDate = expense.created_at.slice(0, 10);
+    if (fromDate && expenseDate < fromDate) return false;
+    if (toDate && expenseDate > toDate) return false;
+    return true;
+  });
+  const visibleExpenses = filteredExpenses.slice(0, visibleExpenseCount);
+  const hasMoreExpenses = filteredExpenses.length > visibleExpenseCount;
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
   for (const split of splitsQuery.data ?? []) {
     (splitsByExpense[split.expense_id] ??= []).push(split);
   }
   const pairwiseDebts = computePairwiseDebts(expenses, splitsByExpense);
+  const visibleDebts = pairwiseDebts.filter((debt) => debt.from === userId || debt.to === userId);
   const isCreator = group.created_by === userId;
   const isMember = acceptedMembers.some((member) => member.user_id === userId);
 
@@ -270,13 +300,13 @@ function GroupDetail() {
 
       <section className="space-y-3">
         <h2 className="font-display text-sm font-semibold text-muted-foreground">Who owes whom</h2>
-        {pairwiseDebts.length === 0 ? (
+        {visibleDebts.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
             Everyone's settled up.
           </p>
         ) : (
           <div className="space-y-2">
-            {pairwiseDebts.map((debt) => (
+            {visibleDebts.map((debt) => (
               <DebtRow
                 key={`${debt.from}-${debt.to}`}
                 debt={debt}
@@ -284,6 +314,13 @@ function GroupDetail() {
                 nameOf={nameOf}
                 payeeUpiId={profileMap.get(debt.to)?.upi_id ?? null}
                 cashBusy={cashSettlement.isPending}
+                upiBusy={upiSettlement.isPending}
+                onUpiPaid={() =>
+                  upiSettlement.mutate({
+                    payeeId: debt.to,
+                    amount: debt.amount,
+                  })
+                }
                 onCashPaid={() =>
                   cashSettlement.mutate({
                     payeeId: debt.to,
@@ -310,13 +347,39 @@ function GroupDetail() {
             trigger={<Button size="sm">Add expense</Button>}
           />
         </div>
-        {expenses.length === 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label>From date</Label>
+            <Input
+              type="date"
+              value={fromDate}
+              onChange={(event) => {
+                setFromDate(event.target.value);
+                setVisibleExpenseCount(5);
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>To date</Label>
+            <Input
+              type="date"
+              value={toDate}
+              onChange={(event) => {
+                setToDate(event.target.value);
+                setVisibleExpenseCount(5);
+              }}
+            />
+          </div>
+        </div>
+        {filteredExpenses.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
-            No expenses yet. Add the first one!
+            {expenses.length === 0
+              ? "No expenses yet. Add the first one!"
+              : "No expenses found for this date range."}
           </p>
         ) : (
           <div className="space-y-2">
-            {expenses.map((expense) => (
+            {visibleExpenses.map((expense) => (
               <ExpenseRow
                 key={expense.id}
                 expense={expense}
@@ -328,6 +391,15 @@ function GroupDetail() {
                 onRemove={() => removeExpenseMutation.mutate(expense.id)}
               />
             ))}
+            {hasMoreExpenses ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setVisibleExpenseCount((count) => count + 5)}
+              >
+                Load more
+              </Button>
+            ) : null}
           </div>
         )}
       </section>
@@ -341,6 +413,8 @@ function DebtRow({
   nameOf,
   payeeUpiId,
   cashBusy,
+  upiBusy,
+  onUpiPaid,
   onCashPaid,
   groupName,
 }: {
@@ -349,6 +423,8 @@ function DebtRow({
   nameOf: (id: string) => string;
   payeeUpiId: string | null;
   cashBusy: boolean;
+  upiBusy: boolean;
+  onUpiPaid: () => void;
   onCashPaid: () => void;
   groupName: string;
 }) {
@@ -373,6 +449,8 @@ function DebtRow({
           payeeUpiId={payeeUpiId}
           amount={debt.amount}
           note={`SplitPay - ${groupName}`}
+          onUpiPaid={onUpiPaid}
+          upiBusy={upiBusy}
           onCashPaid={onCashPaid}
           cashBusy={cashBusy}
           trigger={
@@ -403,7 +481,7 @@ function ExpenseRow({
   removeBusy: boolean;
   onRemove: () => void;
 }) {
-  const youAddedThis = expense.created_by === currentUserId;
+  const canShowRemove = expense.created_by === currentUserId && canRemove;
 
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -420,15 +498,10 @@ function ExpenseRow({
         <p className="font-display font-bold">
           <CountUpCurrency amount={Number(expense.amount)} />
         </p>
-        {youAddedThis ? (
+        {canShowRemove ? (
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                disabled={!canRemove || removeBusy}
-                aria-label="Remove expense"
-              >
+              <Button size="icon" variant="ghost" disabled={removeBusy} aria-label="Remove expense">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </AlertDialogTrigger>
