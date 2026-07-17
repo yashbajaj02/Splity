@@ -1,0 +1,1 @@
+import{c as e}from"./use-auth-BjE5eg0N.js";import{a as t}from"./dist-BI-Rfzvl.js";var n=e();function r({className:e}){return(0,n.jsx)(`img`,{src:`/logo.png`,alt:`Splity`,className:t(`rounded-xl object-cover`,e)})}export{r as t};

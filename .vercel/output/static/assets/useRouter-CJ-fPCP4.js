@@ -1,0 +1,1 @@
+import{d as e,l as t}from"./use-auth-BjE5eg0N.js";var n=e(t(),1),r=n.createContext(null);function i(e){return n.useContext(r)}export{r as n,i as t};
