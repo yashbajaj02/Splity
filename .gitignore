@@ -16,6 +16,8 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+# Vercel
+.vercel/
 
 # Local sandbox leftovers
 .lovable/
@@ -43,3 +45,4 @@ scripts/.e2e-accounts.json
 *.njsproj
 *.sln
 *.sw?
+
