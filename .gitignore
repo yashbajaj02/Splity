@@ -16,8 +16,9 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-# Vercel
 .vercel/
+.output/
+.tanstack/
 
 # Local sandbox leftovers
 .lovable/
