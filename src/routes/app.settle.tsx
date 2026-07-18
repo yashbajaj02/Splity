@@ -112,7 +112,7 @@ function SettlePage() {
               payeeUpiId={b.profile?.upi_id ?? null}
               amount={b.amount}
               note="SplitPay settlement"
-              onCashPaid={() => {
+              onCashPaid={(paidAmount) => {
                 if (!b.settlementGroupId) {
                   toast.error("No shared group found to record this payment.");
                   return;
@@ -120,12 +120,12 @@ function SettlePage() {
                 cashSettlement.mutate({
                   groupId: b.settlementGroupId,
                   payeeId: b.counterpartyId,
-                  amount: b.amount,
+                  amount: paidAmount,
                 });
               }}
               cashDisabled={!b.settlementGroupId}
               cashBusy={cashSettlement.isPending}
-              onUpiPaid={() => {
+              onUpiPaid={(paidAmount) => {
                 if (!b.settlementGroupId) {
                   toast.error("No shared group found to record this payment.");
                   return;
@@ -133,7 +133,7 @@ function SettlePage() {
                 upiSettlement.mutate({
                   groupId: b.settlementGroupId,
                   payeeId: b.counterpartyId,
-                  amount: b.amount,
+                  amount: paidAmount,
                 });
               }}
               upiBusy={upiSettlement.isPending}

@@ -86,9 +86,14 @@ function GroupDetail() {
     (profilesQuery.data ?? []).map((profile) => [profile.id, profile]),
   );
   const nameOf = (id: string) => {
-    if (id === userId) return "You";
     const profile = profileMap.get(id);
-    return profile?.username ? `@${profile.username}` : "user";
+    if (id === userId) return `You${profile?.username ? ` (@${profile.username})` : ""}`;
+    if (profile) {
+      if (profile.full_name && profile.username) return `${profile.full_name} (@${profile.username})`;
+      if (profile.full_name) return profile.full_name;
+      if (profile.username) return `@${profile.username}`;
+    }
+    return "user";
   };
 
   const expenseIds = (expensesQuery.data ?? []).map((expense) => expense.id);
@@ -315,16 +320,16 @@ function GroupDetail() {
                 payeeUpiId={profileMap.get(debt.to)?.upi_id ?? null}
                 cashBusy={cashSettlement.isPending}
                 upiBusy={upiSettlement.isPending}
-                onUpiPaid={() =>
+                onUpiPaid={(paidAmount) =>
                   upiSettlement.mutate({
                     payeeId: debt.to,
-                    amount: debt.amount,
+                    amount: paidAmount,
                   })
                 }
-                onCashPaid={() =>
+                onCashPaid={(paidAmount) =>
                   cashSettlement.mutate({
                     payeeId: debt.to,
-                    amount: debt.amount,
+                    amount: paidAmount,
                   })
                 }
                 groupName={group.name}
@@ -424,8 +429,8 @@ function DebtRow({
   payeeUpiId: string | null;
   cashBusy: boolean;
   upiBusy: boolean;
-  onUpiPaid: () => void;
-  onCashPaid: () => void;
+  onUpiPaid: (paidAmount: number) => void;
+  onCashPaid: (paidAmount: number) => void;
   groupName: string;
 }) {
   const debtText =

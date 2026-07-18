@@ -48,7 +48,6 @@ export function AddExpenseDialog({
   );
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [paidBy, setPaidBy] = useState(userId);
   const [participants, setParticipants] = useState<string[]>([]);
   const queryClient = useQueryClient();
 
@@ -79,26 +78,29 @@ export function AddExpenseDialog({
     const pmap = new Map((profilesQuery.data ?? []).map((p) => [p.id, p]));
     return (membersQuery.data ?? [])
       .filter((m) => m.status === "accepted")
-      .map((m) => ({
-        id: m.user_id,
-        name:
-          m.user_id === userId
-            ? "You"
-            : pmap.get(m.user_id)?.username
-              ? `@${pmap.get(m.user_id)!.username}`
-              : "user",
-      }));
+      .map((m) => {
+        const p = pmap.get(m.user_id);
+        
+        let displayName = "user";
+        if (p) {
+          if (p.full_name && p.username) displayName = `${p.full_name} (@${p.username})`;
+          else if (p.full_name) displayName = p.full_name;
+          else if (p.username) displayName = `@${p.username}`;
+        }
+
+        return {
+          id: m.user_id,
+          name: m.user_id === userId ? `You${p?.username ? ` (@${p.username})` : ""}` : displayName,
+        };
+      });
   }, [fixedMembers, membersQuery.data, profilesQuery.data, userId]);
 
   useEffect(() => {
     if (!open) return;
     if (members.length > 0) {
       setParticipants(members.map((m) => m.id));
-      setPaidBy((prev) =>
-        members.some((m) => m.id === prev) ? prev : userId,
-      );
     }
-  }, [open, members, userId]);
+  }, [open, members]);
 
   useEffect(() => {
     if (open && groups?.[0] && !fixedGroupId) {
@@ -110,7 +112,6 @@ export function AddExpenseDialog({
     setDescription("");
     setAmount("");
     setParticipants(members.map((m) => m.id));
-    setPaidBy(userId);
   };
 
   const allSelected =
@@ -149,7 +150,6 @@ export function AddExpenseDialog({
       await addExpense({
         groupId: activeGroupId,
         createdBy: userId,
-        paidBy,
         description: description.trim(),
         amount: total,
         splits,
@@ -246,17 +246,10 @@ export function AddExpenseDialog({
             <>
               <div className="space-y-1.5">
                 <Label>Paid by</Label>
-                <select
-                  value={paidBy}
-                  onChange={(e) => setPaidBy(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                >
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-secondary/40 px-3 py-2 text-sm font-medium text-foreground">
+                  <span>👤</span>
+                  <span>{members.find((m) => m.id === userId)?.name || "You"}</span>
+                </div>
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">

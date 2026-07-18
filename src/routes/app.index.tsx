@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Users, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
-import { getMyGroups, createGroup } from "@/lib/api";
+import { createGroup, getMyGroups, getProfile } from "@/lib/api";
 import { BalanceSummaryCards } from "@/components/BalanceSummaryCards";
 import { AddExpenseFab } from "@/components/AddExpenseDialog";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,14 +29,34 @@ export const Route = createFileRoute("/app/")({
 function GroupsHome() {
   const { session } = useAuth();
   const userId = session!.user.id;
+  const [now, setNow] = useState(() => new Date());
 
   const groupsQuery = useQuery({
     queryKey: ["my-groups", userId],
     queryFn: () => getMyGroups(userId),
   });
+  const profileQuery = useQuery({
+    queryKey: ["profile", userId],
+    queryFn: () => getProfile(userId),
+  });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const settleQuery = useSettleBalances(userId);
   const groups = groupsQuery.data ?? [];
+  const profile = profileQuery.data;
+  const firstName = getFirstName(
+    profile?.full_name ??
+      (session!.user.user_metadata.full_name as string | undefined) ??
+      (session!.user.user_metadata.name as string | undefined) ??
+      session!.user.email?.split("@")[0] ??
+      "there",
+  );
+  const greeting = getGreeting(now);
+  const initials = getInitials(profile?.full_name ?? firstName, session!.user.email ?? "");
   const totalOwe = (settleQuery.data?.iOwe ?? []).reduce(
     (s, b) => s + b.amount,
     0,
@@ -48,14 +69,25 @@ function GroupsHome() {
   return (
     <>
       <div className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-2xl font-bold">Your groups</h1>
-            <p className="text-sm text-muted-foreground">
-              Split bills with friends and roommates.
+        <div className="space-y-4">
+          <div className="py-2 pb-4">
+            <h1 className="font-display text-2xl font-bold text-foreground sm:text-3xl">
+              {greeting}, {firstName} 👋
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Keep your groups tidy and your balances in sight.
             </p>
           </div>
-          <CreateGroupDialog userId={userId} />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="font-display text-2xl font-bold">Your groups</h1>
+              <p className="text-sm text-muted-foreground">
+                Split bills with friends and roommates.
+              </p>
+            </div>
+            <CreateGroupDialog userId={userId} />
+          </div>
         </div>
 
         {settleQuery.isLoading ? (
@@ -137,6 +169,28 @@ function GroupsHome() {
       />
     </>
   );
+}
+
+function getGreeting(date: Date) {
+  const hour = date.getHours();
+  if (hour >= 5 && hour <= 11) return "Good Morning";
+  if (hour >= 12 && hour <= 16) return "Good Afternoon";
+  if (hour >= 17 && hour <= 20) return "Good Evening";
+  return "Good Night";
+}
+
+function getFirstName(name: string) {
+  const trimmed = name.trim();
+  if (!trimmed) return "there";
+  return trimmed.split(/\s+/)[0];
+}
+
+function getInitials(name: string, email: string) {
+  const source = name.trim() || email.trim();
+  if (!source) return "SP";
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
 
 function EmptyState({ userId }: { userId: string }) {

@@ -169,6 +169,22 @@ as $$
   );
 $$;
 
+create or replace function public.is_involved_in_expense(_expense_id uuid, _user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.expenses
+    where id = _expense_id and paid_by = _user_id
+  ) or exists (
+    select 1 from public.expense_splits
+    where expense_id = _expense_id and user_id = _user_id
+  );
+$$;
+
 -- Find a user by exact username (case-insensitive) for invites.
 -- Returns only id + username, so the full profile table stays private.
 create or replace function public.find_user_by_username(_username text)
@@ -204,6 +220,7 @@ $$;
 
 grant execute on function public.is_group_member(uuid, uuid)       to authenticated;
 grant execute on function public.is_group_admin(uuid, uuid)        to authenticated;
+grant execute on function public.is_involved_in_expense(uuid, uuid) to authenticated;
 grant execute on function public.find_user_by_username(text)       to authenticated;
 grant execute on function public.get_notification_sender_profiles(uuid[]) to authenticated;
 
@@ -360,9 +377,10 @@ create policy "gm_delete"
 
 -- ---------- EXPENSES ----------
 drop policy if exists "expenses_select_members" on public.expenses;
-create policy "expenses_select_members"
+drop policy if exists "expenses_select_involved" on public.expenses;
+create policy "expenses_select_involved"
   on public.expenses for select to authenticated
-  using (public.is_group_member(group_id, auth.uid()));
+  using (public.is_involved_in_expense(id, auth.uid()));
 
 drop policy if exists "expenses_insert_members" on public.expenses;
 create policy "expenses_insert_members"
@@ -370,6 +388,7 @@ create policy "expenses_insert_members"
   with check (
     public.is_group_member(group_id, auth.uid())
     and created_by = auth.uid()
+    and paid_by = auth.uid()
   );
 
 drop policy if exists "expenses_update_owner" on public.expenses;
@@ -391,15 +410,10 @@ create policy "expenses_delete_owner"
 
 -- ---------- EXPENSE_SPLITS ----------
 drop policy if exists "splits_select_members" on public.expense_splits;
-create policy "splits_select_members"
+drop policy if exists "splits_select_involved" on public.expense_splits;
+create policy "splits_select_involved"
   on public.expense_splits for select to authenticated
-  using (
-    exists (
-      select 1 from public.expenses e
-      where e.id = expense_id
-        and public.is_group_member(e.group_id, auth.uid())
-    )
-  );
+  using (public.is_involved_in_expense(expense_id, auth.uid()));
 
 drop policy if exists "splits_insert_members" on public.expense_splits;
 create policy "splits_insert_members"

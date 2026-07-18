@@ -32,7 +32,7 @@ export async function getProfile(userId: string): Promise<Profile | null> {
 
 export async function updateProfile(
   userId: string,
-  patch: Partial<Pick<Profile, "username" | "upi_id" | "full_name">>,
+  patch: Partial<Pick<Profile, "username" | "upi_id" | "full_name" | "email">>,
 ): Promise<Profile> {
   const { data, error } = await supabase
     .from("profiles")
@@ -258,15 +258,13 @@ export async function getSplitsForExpenses(expenseIds: string[]): Promise<Expens
 export async function addExpense(opts: {
   groupId: string;
   createdBy: string;
-  paidBy: string;
   description: string;
   amount: number;
   splits: { userId: string; amount: number }[];
 }) {
-  const [group, creator, payer, members] = await Promise.all([
+  const [group, creator, members] = await Promise.all([
     getGroup(opts.groupId),
     getProfile(opts.createdBy),
-    getProfile(opts.paidBy),
     getGroupMembers(opts.groupId),
   ]);
 
@@ -275,7 +273,7 @@ export async function addExpense(opts: {
     .insert({
       group_id: opts.groupId,
       created_by: opts.createdBy,
-      paid_by: opts.paidBy,
+      paid_by: opts.createdBy,  // always the authenticated user
       description: opts.description,
       amount: opts.amount,
     })
@@ -292,19 +290,20 @@ export async function addExpense(opts: {
   const { error: sErr } = await supabase.from("expense_splits").insert(rows);
   if (sErr) throw sErr;
 
+  const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
   const recipients = members
-    .filter((member) => member.status === "accepted" && member.user_id !== opts.createdBy)
+    .filter(
+      (member) =>
+        member.status === "accepted" &&
+        member.user_id !== opts.createdBy &&
+        involvedUserIds.has(member.user_id)
+    )
     .map((member) => member.user_id);
 
   if (recipients.length > 0) {
-    const paidByName =
-      opts.paidBy === opts.createdBy
-        ? creator?.username
-          ? `@${creator.username}`
-          : "the sender"
-        : payer?.username
-          ? `@${payer.username}`
-          : "someone else";
+    const paidByName = creator?.username
+      ? `@${creator.username}`
+      : "the sender";
 
     const notificationRows = recipients.map((recipientId) => ({
       recipient_id: recipientId,
@@ -377,7 +376,6 @@ export async function settleByCash(opts: {
   const expense = await addExpense({
     groupId: opts.groupId,
     createdBy: opts.payerId,
-    paidBy: opts.payerId,
     description: "Cash settlement",
     amount: opts.amount,
     splits: [{ userId: opts.payeeId, amount: opts.amount }],
@@ -422,7 +420,6 @@ export async function settleByUpi(opts: {
   const expense = await addExpense({
     groupId: opts.groupId,
     createdBy: opts.payerId,
-    paidBy: opts.payerId,
     description: "UPI settlement",
     amount: opts.amount,
     splits: [{ userId: opts.payeeId, amount: opts.amount }],

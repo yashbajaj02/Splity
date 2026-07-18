@@ -6,6 +6,14 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/hooks/use-auth";
 import { AppLogo } from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -16,16 +24,27 @@ export const Route = createFileRoute("/auth")({
 });
 
 function AuthPage() {
-  const { session, loading: authLoading } = useAuth();
+  const { session, loading: authLoading, isPasswordRecovery } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const isPasswordResetReturn =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).has("passwordUpdated");
 
   useEffect(() => {
-    if (!authLoading && session) navigate({ to: "/app" });
-  }, [authLoading, session, navigate]);
+    if (authLoading || !session) return;
+    if (isPasswordRecovery) {
+      navigate({ to: "/reset-password" });
+      return;
+    }
+    if (!isPasswordResetReturn) navigate({ to: "/app" });
+  }, [authLoading, session, isPasswordRecovery, navigate, isPasswordResetReturn]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +83,25 @@ function AuthPage() {
     } else {
       setEmailSent(true);
     }
+  };
+
+  const handleResetRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetBusy(true);
+
+    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    setResetBusy(false);
+
+    if (error) {
+      toast.error("We couldn't send a reset link right now. Please try again.");
+      return;
+    }
+
+    toast.success("Password reset link has been sent to your email.");
+    setResetOpen(false);
   };
 
   if (emailSent) {
@@ -121,6 +159,16 @@ function AuthPage() {
                   onChange={setPassword}
                   placeholder="••••••••"
                 />
+                <button
+                  type="button"
+                  className="-mt-2 block text-sm font-medium text-primary transition-colors hover:text-primary/80"
+                  onClick={() => {
+                    setResetEmail(email);
+                    setResetOpen(true);
+                  }}
+                >
+                  Forgot Password?
+                </button>
                 <Button type="submit" className="w-full" disabled={busy}>
                   {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Sign in
@@ -156,6 +204,47 @@ function AuthPage() {
           </Tabs>
         </div>
       </div>
+
+      <Dialog open={resetOpen} onOpenChange={setResetOpen}>
+        <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-6 shadow-xl sm:mx-0">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Reset your password</DialogTitle>
+            <DialogDescription>
+              Enter your email address and we'll send you a password reset link.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleResetRequest} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="reset-email">Email Address</Label>
+              <Input
+                id="reset-email"
+                type="email"
+                value={resetEmail}
+                onChange={(e) => setResetEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+                autoComplete="email"
+              />
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setResetOpen(false)}
+                disabled={resetBusy}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={resetBusy}>
+                {resetBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Send Reset Link
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
