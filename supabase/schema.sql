@@ -169,19 +169,27 @@ as $$
   );
 $$;
 
-create or replace function public.is_involved_in_expense(_expense_id uuid, _user_id uuid)
+create or replace function public.get_user_split_expense_ids(_user_id uuid)
+returns setof uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select expense_id from public.expense_splits where user_id = _user_id;
+$$;
+
+create or replace function public.is_expense_owner(_expense_id uuid, _user_id uuid)
 returns boolean
 language sql
-volatile
+stable
 security definer
 set search_path = public
 as $$
   select exists (
     select 1 from public.expenses
-    where id = _expense_id and paid_by = _user_id
-  ) or exists (
-    select 1 from public.expense_splits
-    where expense_id = _expense_id and user_id = _user_id
+    where id = _expense_id
+      and (paid_by = _user_id or created_by = _user_id)
   );
 $$;
 
@@ -380,7 +388,11 @@ drop policy if exists "expenses_select_members" on public.expenses;
 drop policy if exists "expenses_select_involved" on public.expenses;
 create policy "expenses_select_involved"
   on public.expenses for select to authenticated
-  using (public.is_involved_in_expense(id, auth.uid()));
+  using (
+    paid_by = auth.uid()
+    or created_by = auth.uid()
+    or id in (select public.get_user_split_expense_ids(auth.uid()))
+  );
 
 drop policy if exists "expenses_insert_members" on public.expenses;
 create policy "expenses_insert_members"
@@ -413,7 +425,10 @@ drop policy if exists "splits_select_members" on public.expense_splits;
 drop policy if exists "splits_select_involved" on public.expense_splits;
 create policy "splits_select_involved"
   on public.expense_splits for select to authenticated
-  using (public.is_involved_in_expense(expense_id, auth.uid()));
+  using (
+    user_id = auth.uid()
+    or public.is_expense_owner(expense_id, auth.uid())
+  );
 
 drop policy if exists "splits_insert_members" on public.expense_splits;
 create policy "splits_insert_members"
@@ -483,4 +498,16 @@ exception when duplicate_object then null; end $$;
 
 do $$ begin
   alter publication supabase_realtime add table public.group_members;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.expenses;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.expense_splits;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter publication supabase_realtime add table public.groups;
 exception when duplicate_object then null; end $$;

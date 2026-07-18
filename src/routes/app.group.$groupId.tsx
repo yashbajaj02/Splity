@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Clock, Loader2, LogOut, QrCode, Receipt, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
@@ -22,7 +22,7 @@ import {
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
 import { supabase } from "@/lib/supabase";
-import { AddExpenseDialog } from "@/components/AddExpenseDialog";
+const AddExpenseDialog = lazy(() => import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog })));
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { UpiQrDialog } from "@/components/UpiQrDialog";
 import { Button } from "@/components/ui/button";
@@ -342,15 +342,17 @@ function GroupDetail() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-sm font-semibold text-muted-foreground">Expenses</h2>
-          <AddExpenseDialog
-            groupId={groupId}
-            userId={userId}
-            members={acceptedMembers.map((member) => ({
-              id: member.user_id,
-              name: nameOf(member.user_id),
-            }))}
-            trigger={<Button size="sm">Add expense</Button>}
-          />
+          <Suspense fallback={<Button size="sm" disabled>Loading...</Button>}>
+            <AddExpenseDialog
+              groupId={groupId}
+              userId={userId}
+              members={acceptedMembers.map((member) => ({
+                id: member.user_id,
+                name: nameOf(member.user_id),
+              }))}
+              trigger={<Button size="sm">Add expense</Button>}
+            />
+          </Suspense>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
@@ -412,7 +414,7 @@ function GroupDetail() {
   );
 }
 
-function DebtRow({
+const DebtRow = memo(function DebtRow({
   debt,
   userId,
   nameOf,
@@ -440,11 +442,18 @@ function DebtRow({
         ? `${nameOf(debt.from)} owes you`
         : `${nameOf(debt.from)} owes ${nameOf(debt.to)}`;
 
+  const amountColor =
+    debt.from === userId
+      ? "text-red-500"
+      : debt.to === userId
+        ? "text-primary"
+        : "text-muted-foreground";
+
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="min-w-0 flex-1 text-sm">
         <span className="font-semibold">{debtText}</span>
-        <span className="ml-1 font-display font-bold text-primary">
+        <span className={`ml-1 font-display font-bold ${amountColor}`}>
           <CountUpCurrency amount={debt.amount} />
         </span>
       </div>
@@ -467,9 +476,9 @@ function DebtRow({
       ) : null}
     </div>
   );
-}
+});
 
-function ExpenseRow({
+const ExpenseRow = memo(function ExpenseRow({
   expense,
   currentUserId,
   creatorName,

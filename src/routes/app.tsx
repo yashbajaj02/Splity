@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Users, Bell, HandCoins, User } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useSupabaseRealtime } from "@/hooks/use-supabase-realtime";
 import { getProfile, getNotifications } from "@/lib/api";
 import { Onboarding } from "@/components/Onboarding";
 import { AppLogo } from "@/components/AppLogo";
@@ -44,64 +45,8 @@ function AppLayout() {
     enabled: !!userId && !isPasswordRecovery,
   });
 
-  // Realtime: refetch notifications & related data on any change to my notifications.
-  useEffect(() => {
-    if (!userId || isPasswordRecovery) return;
-    const channel = supabase
-      .channel(`app-sync-${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "notifications",
-          filter: `recipient_id=eq.${userId}`,
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
-          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expenses",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expense_splits",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "group_members",
-        },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-        },
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [userId, isPasswordRecovery, queryClient]);
+  // Global realtime synchronization
+  useSupabaseRealtime(userId && !isPasswordRecovery ? userId : undefined);
 
   if (loading || isPasswordRecovery || !session || profileQuery.isLoading) {
     return (
