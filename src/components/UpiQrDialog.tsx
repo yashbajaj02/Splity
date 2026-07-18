@@ -48,27 +48,10 @@ export function UpiQrDialog({
 
   const hasUpi = !!payeeUpiId;
 
-  // The QR code URI uses the existing logic.
+  // Both QR code and the Pay Now deep-link use the same shared URI
   const uri = hasUpi
     ? buildUpiUri({ payeeUpiId: payeeUpiId!, payeeName, amount, note })
     : "";
-
-  // The deep link intent URI explicitly encodes spaces as %20.
-  // URLSearchParams uses '+' for spaces, which fails in many UPI apps.
-  const intentUri = hasUpi
-    ? `upi://pay?pa=${encodeURIComponent(payeeUpiId!)}&pn=${encodeURIComponent(payeeName)}&am=${amount.toFixed(2)}&cu=INR${note ? `&tn=${encodeURIComponent(note)}` : ''}`
-    : "";
-
-  const handlePayNow = () => {
-    const anchor = document.createElement("a");
-    anchor.href = intentUri;
-    anchor.rel = "noopener noreferrer";
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    // Show confirmation screen after launching app
-    setTimeout(() => setAwaitingConfirmation(true), 1000);
-  };
 
   const handlePaymentCompleted = async () => {
     if (!onUpiPaid) return;
@@ -185,11 +168,16 @@ export function UpiQrDialog({
                 <div className="space-y-2">
                   <Button
                     className="w-full gap-2 h-11"
-                    onClick={handlePayNow}
-                    asChild={false}
+                    asChild
+                    onClick={() => {
+                      // Wait a moment so the intent can fire, then show the confirmation screen
+                      setTimeout(() => setAwaitingConfirmation(true), 1000);
+                    }}
                   >
-                    <Smartphone className="h-4 w-4" />
-                    Pay Now ₹{amount.toFixed(2)}
+                    <a href={uri} rel="noopener noreferrer">
+                      <Smartphone className="h-4 w-4" />
+                      Pay Now ₹{amount.toFixed(2)}
+                    </a>
                   </Button>
 
                   {onCashPaid && (

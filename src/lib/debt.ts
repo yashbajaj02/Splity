@@ -134,13 +134,15 @@ export function buildUpiUri(opts: {
   amount: number;
   note?: string;
 }): string {
-  const params = new URLSearchParams();
-  params.set("pa", opts.payeeUpiId);
-  if (opts.payeeName) params.set("pn", opts.payeeName);
-  params.set("am", opts.amount.toFixed(2));
-  params.set("cu", "INR");
-  if (opts.note) params.set("tn", opts.note);
-  return `upi://pay?${params.toString()}`;
+  const parts = [
+    `pa=${encodeURIComponent(opts.payeeUpiId)}`,
+    `am=${opts.amount.toFixed(2)}`,
+    `cu=INR`
+  ];
+  if (opts.payeeName) parts.push(`pn=${encodeURIComponent(opts.payeeName)}`);
+  if (opts.note) parts.push(`tn=${encodeURIComponent(opts.note)}`);
+  
+  return `upi://pay?${parts.join('&')}`;
 }
 
 export function formatCurrency(amount: number): string {
