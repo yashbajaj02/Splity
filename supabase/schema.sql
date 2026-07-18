@@ -172,7 +172,7 @@ $$;
 create or replace function public.is_involved_in_expense(_expense_id uuid, _user_id uuid)
 returns boolean
 language sql
-stable
+volatile
 security definer
 set search_path = public
 as $$
