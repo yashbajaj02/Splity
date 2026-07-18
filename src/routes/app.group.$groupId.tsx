@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Clock, Loader2, LogOut, QrCode, Receipt, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeft, CalendarDays, ChevronDown, Clock, Loader2, LogOut, QrCode, Receipt, Trash2, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -58,9 +58,40 @@ function GroupDetail() {
   const userId = session!.user.id;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [visibleExpenseCount, setVisibleExpenseCount] = useState(5);
+
+  // Derive fromDate / toDate from the current preset — same values the old inputs produced
+  const { fromDate, toDate } = (() => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = new Date();
+    if (datePreset === "today") {
+      const t = fmt(today);
+      return { fromDate: t, toDate: t };
+    }
+    if (datePreset === "yesterday") {
+      const y = new Date(today); y.setDate(y.getDate() - 1);
+      const yStr = fmt(y);
+      return { fromDate: yStr, toDate: yStr };
+    }
+    if (datePreset === "last7") {
+      const d = new Date(today); d.setDate(d.getDate() - 6);
+      return { fromDate: fmt(d), toDate: fmt(today) };
+    }
+    if (datePreset === "thisMonth") {
+      const start = new Date(today.getFullYear(), today.getMonth(), 1);
+      const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return { fromDate: fmt(start), toDate: fmt(end) };
+    }
+
+    if (datePreset === "custom") {
+      return { fromDate: customFrom, toDate: customTo };
+    }
+    return { fromDate: "", toDate: "" };
+  })();
 
   const groupQuery = useQuery({
     queryKey: ["group", groupId],
@@ -321,13 +352,13 @@ function GroupDetail() {
                 cashBusy={cashSettlement.isPending}
                 upiBusy={upiSettlement.isPending}
                 onUpiPaid={(paidAmount) =>
-                  upiSettlement.mutate({
+                  upiSettlement.mutateAsync({
                     payeeId: debt.to,
                     amount: paidAmount,
                   })
                 }
                 onCashPaid={(paidAmount) =>
-                  cashSettlement.mutate({
+                  cashSettlement.mutateAsync({
                     payeeId: debt.to,
                     amount: paidAmount,
                   })
@@ -354,30 +385,25 @@ function GroupDetail() {
             />
           </Suspense>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>From date</Label>
-            <Input
-              type="date"
-              value={fromDate}
-              onChange={(event) => {
-                setFromDate(event.target.value);
-                setVisibleExpenseCount(5);
-              }}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>To date</Label>
-            <Input
-              type="date"
-              value={toDate}
-              onChange={(event) => {
-                setToDate(event.target.value);
-                setVisibleExpenseCount(5);
-              }}
-            />
-          </div>
-        </div>
+        <DateRangeFilter
+          preset={datePreset}
+          customFrom={customFrom}
+          customTo={customTo}
+          fromDate={fromDate}
+          toDate={toDate}
+          onPresetChange={(p) => {
+            setDatePreset(p);
+            setVisibleExpenseCount(5);
+          }}
+          onCustomFromChange={(v) => {
+            setCustomFrom(v);
+            setVisibleExpenseCount(5);
+          }}
+          onCustomToChange={(v) => {
+            setCustomTo(v);
+            setVisibleExpenseCount(5);
+          }}
+        />
         {filteredExpenses.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
             {expenses.length === 0
@@ -410,6 +436,140 @@ function GroupDetail() {
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DateRangeFilter — modern preset-based date filter
+// ─────────────────────────────────────────────────────────────────────────────
+type DatePreset = "all" | "today" | "yesterday" | "last7" | "thisMonth" | "custom";
+
+const PRESET_LABELS: Record<DatePreset, string> = {
+  all: "All time",
+  today: "Today",
+  yesterday: "Yesterday",
+  last7: "Last 7 days",
+  thisMonth: "This month",
+  custom: "Custom range",
+};
+
+const PRESETS: DatePreset[] = ["all", "today", "yesterday", "last7", "thisMonth", "custom"];
+
+function formatDisplayDate(iso: string): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function DateRangeFilter({
+  preset,
+  customFrom,
+  customTo,
+  fromDate,
+  toDate,
+  onPresetChange,
+  onCustomFromChange,
+  onCustomToChange,
+}: {
+  preset: DatePreset;
+  customFrom: string;
+  customTo: string;
+  fromDate: string;
+  toDate: string;
+  onPresetChange: (p: DatePreset) => void;
+  onCustomFromChange: (v: string) => void;
+  onCustomToChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const hasActiveFilter = preset !== "all";
+  const rangeLabel =
+    fromDate && toDate && fromDate === toDate
+      ? formatDisplayDate(fromDate)
+      : fromDate && toDate
+        ? `${formatDisplayDate(fromDate)} – ${formatDisplayDate(toDate)}`
+        : fromDate
+          ? `From ${formatDisplayDate(fromDate)}`
+          : toDate
+            ? `Until ${formatDisplayDate(toDate)}`
+            : null;
+  return (
+    <div className="space-y-3">
+      {/* Pills container */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
+        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap mr-1 flex items-center gap-1.5">
+          <CalendarDays className="h-3.5 w-3.5" />
+          Date range
+        </span>
+        {PRESETS.map((p) => {
+          const isActive = preset === p;
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPresetChange(p)}
+              className={[
+                "whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors border",
+                isActive
+                  ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                  : "border-border bg-card text-foreground hover:bg-secondary/60",
+              ].join(" ")}
+            >
+              {PRESET_LABELS[p]}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Custom range inputs */}
+      {preset === "custom" && (
+        <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-border bg-card">
+          <div className="space-y-1.5">
+            <label htmlFor="custom-from-date" className="text-xs font-medium text-muted-foreground">From</label>
+            <Input
+              id="custom-from-date"
+              type="date"
+              value={customFrom}
+              max={customTo || undefined}
+              onChange={(e) => onCustomFromChange(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="custom-to-date" className="text-xs font-medium text-muted-foreground">To</label>
+            <Input
+              id="custom-to-date"
+              type="date"
+              value={customTo}
+              min={customFrom || undefined}
+              onChange={(e) => onCustomToChange(e.target.value)}
+              className="h-9 text-sm"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Active range label */}
+      {hasActiveFilter && rangeLabel && (
+        <div className="flex items-center justify-between rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4" />
+            <span className="font-medium">{rangeLabel}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onPresetChange("all")}
+            className="flex items-center gap-1 text-xs font-semibold hover:text-primary/80"
+          >
+            Clear <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -538,7 +698,7 @@ const ExpenseRow = memo(function ExpenseRow({
       </div>
     </div>
   );
-}
+});
 
 function LeaveGroupButton({
   groupName,

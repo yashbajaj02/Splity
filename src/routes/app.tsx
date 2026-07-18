@@ -9,6 +9,7 @@ import { getProfile, getNotifications } from "@/lib/api";
 import { Onboarding } from "@/components/Onboarding";
 import { AppLogo } from "@/components/AppLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -50,8 +51,18 @@ function AppLayout() {
 
   if (loading || isPasswordRecovery || !session || profileQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="min-h-[100dvh] bg-background">
+        <header className="sticky top-0 z-20 border-b border-border bg-background/80 px-5 py-3.5">
+          <div className="mx-auto flex max-w-2xl items-center justify-between">
+            <Skeleton className="h-8 w-24 rounded-md" />
+            <Skeleton className="h-8 w-20 rounded-full" />
+          </div>
+        </header>
+        <main className="mx-auto max-w-2xl px-5 py-6 space-y-6">
+          <Skeleton className="h-40 w-full rounded-2xl" />
+          <Skeleton className="h-20 w-full rounded-2xl" />
+          <Skeleton className="h-20 w-full rounded-2xl" />
+        </main>
       </div>
     );
   }
@@ -89,7 +100,7 @@ function AppLayout() {
   const pendingCount = (notifQuery.data ?? []).filter((n) => n.status === "pending").length;
 
   return (
-    <div className="min-h-screen pb-24">
+    <div className="min-h-[100dvh] overflow-x-hidden pb-24 bg-background">
       <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
           <Link to="/app" className="flex items-center gap-2">
