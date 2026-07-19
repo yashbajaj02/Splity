@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarDays, ChevronDown, Clock, Loader2, LogOut, QrCode, Receipt, Trash2, UserPlus, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock, Loader2, LogOut, Receipt, Trash2, UserPlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -16,15 +16,14 @@ import {
   getSplitsForExpenses,
   inviteToGroup,
   leaveGroup,
-  settleByCash,
-  settleByUpi,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
 import { supabase } from "@/lib/supabase";
 const AddExpenseDialog = lazy(() => import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog })));
 import { CountUpCurrency } from "@/components/CountUpCurrency";
-import { UpiQrDialog } from "@/components/UpiQrDialog";
+import { QrPayDialog } from "@/components/QrPayDialog";
+import { PaidDialog } from "@/components/PaidDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -193,39 +192,6 @@ function GroupDetail() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const cashSettlement = useMutation({
-    mutationFn: (values: { payeeId: string; amount: number }) =>
-      settleByCash({
-        groupId,
-        payerId: userId,
-        payeeId: values.payeeId,
-        amount: values.amount,
-      }),
-    onSuccess: () => {
-      toast.success("Cash payment recorded. They were notified.");
-      queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
-      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const upiSettlement = useMutation({
-    mutationFn: (values: { payeeId: string; amount: number }) =>
-      settleByUpi({
-        groupId,
-        payerId: userId,
-        payeeId: values.payeeId,
-        amount: values.amount,
-      }),
-    onSuccess: (_data, values) => {
-      toast.success(`Payment of Rs ${values.amount.toFixed(2)} settled.`);
-      queryClient.invalidateQueries({ queryKey: ["group-expenses", groupId] });
-      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-
   if (groupQuery.isLoading) {
     return (
       <div className="flex justify-center py-16">
@@ -349,21 +315,7 @@ function GroupDetail() {
                 userId={userId}
                 nameOf={nameOf}
                 payeeUpiId={profileMap.get(debt.to)?.upi_id ?? null}
-                cashBusy={cashSettlement.isPending}
-                upiBusy={upiSettlement.isPending}
-                onUpiPaid={(paidAmount) =>
-                  upiSettlement.mutateAsync({
-                    payeeId: debt.to,
-                    amount: paidAmount,
-                  })
-                }
-                onCashPaid={(paidAmount) =>
-                  cashSettlement.mutateAsync({
-                    payeeId: debt.to,
-                    amount: paidAmount,
-                  })
-                }
-                groupName={group.name}
+                groupId={groupId}
               />
             ))}
           </div>
@@ -579,21 +531,13 @@ const DebtRow = memo(function DebtRow({
   userId,
   nameOf,
   payeeUpiId,
-  cashBusy,
-  upiBusy,
-  onUpiPaid,
-  onCashPaid,
-  groupName,
+  groupId,
 }: {
   debt: PairwiseDebt;
   userId: string;
   nameOf: (id: string) => string;
   payeeUpiId: string | null;
-  cashBusy: boolean;
-  upiBusy: boolean;
-  onUpiPaid: (paidAmount: number) => void;
-  onCashPaid: (paidAmount: number) => void;
-  groupName: string;
+  groupId: string;
 }) {
   const debtText =
     debt.from === userId
@@ -618,21 +562,21 @@ const DebtRow = memo(function DebtRow({
         </span>
       </div>
       {debt.from === userId ? (
-        <UpiQrDialog
-          payeeName={nameOf(debt.to)}
-          payeeUpiId={payeeUpiId}
-          amount={debt.amount}
-          note={`SplitPay - ${groupName}`}
-          onUpiPaid={onUpiPaid}
-          upiBusy={upiBusy}
-          onCashPaid={onCashPaid}
-          cashBusy={cashBusy}
-          trigger={
-            <Button size="sm">
-              <QrCode className="mr-1.5 h-4 w-4" /> Pay
-            </Button>
-          }
-        />
+        <div className="flex gap-2">
+          <QrPayDialog
+            payeeName={nameOf(debt.to)}
+            payeeUpiId={payeeUpiId}
+            amount={debt.amount}
+            note={`Splity settlement`}
+          />
+          <PaidDialog
+            payeeName={nameOf(debt.to)}
+            amount={debt.amount}
+            groupId={groupId}
+            payeeId={debt.to}
+            payerId={userId}
+          />
+        </div>
       ) : null}
     </div>
   );

@@ -14,7 +14,7 @@ import {
 } from "@/lib/api";
 import type { AppNotification, Profile } from "@/lib/app-types";
 import { Button } from "@/components/ui/button";
-import { UpiQrDialog } from "@/components/UpiQrDialog";
+import { QrPayDialog } from "@/components/QrPayDialog";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 
 export const Route = createFileRoute("/app/activity")({
@@ -299,16 +299,11 @@ function NotificationCard({
 
           {isSettlement && pending ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              <UpiQrDialog
+              <QrPayDialog
                 payeeName={senderName}
                 payeeUpiId={senderUpi}
                 amount={Number(notification.amount ?? 0)}
-                note="SplitPay settlement"
-                trigger={
-                  <Button size="sm">
-                    <HandCoins className="mr-1 h-4 w-4" /> Settle up
-                  </Button>
-                }
+                note="Splity settlement"
               />
               <Button size="sm" variant="outline" onClick={onMarkRead} disabled={busy}>
                 <CheckCheck className="mr-1 h-4 w-4" /> Mark as read

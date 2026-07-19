@@ -5,11 +5,12 @@ import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
 import type { Balance } from "@/hooks/use-settle-balances";
-import { sendSettlementRequest, settleByCash, settleByUpi } from "@/lib/api";
+import { sendSettlementRequest } from "@/lib/api";
 import { BalanceSummaryCards } from "@/components/BalanceSummaryCards";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { Button } from "@/components/ui/button";
-import { UpiQrDialog } from "@/components/UpiQrDialog";
+import { QrPayDialog } from "@/components/QrPayDialog";
+import { PaidDialog } from "@/components/PaidDialog";
 
 export const Route = createFileRoute("/app/settle")({
   component: SettlePage,
@@ -33,38 +34,6 @@ function SettlePage() {
     onSuccess: () => {
       toast.success("Reminder sent!");
       queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const cashSettlement = useMutation({
-    mutationFn: (v: { groupId: string; payeeId: string; amount: number }) =>
-      settleByCash({
-        groupId: v.groupId,
-        payerId: userId,
-        payeeId: v.payeeId,
-        amount: v.amount,
-      }),
-    onSuccess: () => {
-      toast.success("Cash payment recorded. They were notified.");
-      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const upiSettlement = useMutation({
-    mutationFn: (v: { groupId: string; payeeId: string; amount: number }) =>
-      settleByUpi({
-        groupId: v.groupId,
-        payerId: userId,
-        payeeId: v.payeeId,
-        amount: v.amount,
-      }),
-    onSuccess: (_data, values) => {
-      toast.success(`Payment of Rs ${values.amount.toFixed(2)} settled.`);
-      queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -107,37 +76,21 @@ function SettlePage() {
       <Section title="You owe" empty="You don't owe anyone. Nice!">
         {data.iOwe.map((b) => (
           <BalanceRow key={b.counterpartyId} b={b} negative>
-            <UpiQrDialog
-              payeeName={b.profile?.username ? `@${b.profile.username}` : "them"}
-              payeeUpiId={b.profile?.upi_id ?? null}
-              amount={b.amount}
-              note="SplitPay settlement"
-              onCashPaid={(paidAmount) => {
-                if (!b.settlementGroupId) {
-                  toast.error("No shared group found to record this payment.");
-                  return;
-                }
-                cashSettlement.mutate({
-                  groupId: b.settlementGroupId,
-                  payeeId: b.counterpartyId,
-                  amount: paidAmount,
-                });
-              }}
-              cashDisabled={!b.settlementGroupId}
-              cashBusy={cashSettlement.isPending}
-              onUpiPaid={(paidAmount) => {
-                if (!b.settlementGroupId) {
-                  toast.error("No shared group found to record this payment.");
-                  return;
-                }
-                upiSettlement.mutate({
-                  groupId: b.settlementGroupId,
-                  payeeId: b.counterpartyId,
-                  amount: paidAmount,
-                });
-              }}
-              upiBusy={upiSettlement.isPending}
-            />
+            <div className="flex gap-2">
+              <QrPayDialog
+                payeeName={b.profile?.username ? `@${b.profile.username}` : "them"}
+                payeeUpiId={b.profile?.upi_id ?? null}
+                amount={b.amount}
+                note="Splity settlement"
+              />
+              <PaidDialog
+                payeeName={b.profile?.username ? `@${b.profile.username}` : "them"}
+                amount={b.amount}
+                groupId={b.settlementGroupId}
+                payeeId={b.counterpartyId}
+                payerId={userId}
+              />
+            </div>
           </BalanceRow>
         ))}
       </Section>
