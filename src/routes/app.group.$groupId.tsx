@@ -207,31 +207,7 @@ function GroupDetail() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  if (groupQuery.isLoading) {
-    return (
-      <div className="flex justify-center py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (groupQuery.isError) {
-    return (
-      <div className="space-y-3 py-16 text-center">
-        <p className="text-sm font-medium text-foreground">Could not load this group.</p>
-        <p className="text-sm text-muted-foreground">{(groupQuery.error as Error).message}</p>
-        <Button variant="outline" size="sm" onClick={() => groupQuery.refetch()}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-
-  if (!groupQuery.data) {
-    return <div className="py-16 text-center text-sm text-muted-foreground">Group not found.</div>;
-  }
-
-  const group = groupQuery.data;
+  const group = groupQuery.data ?? null;
   const members = membersQuery.data ?? [];
   const acceptedMembers = members.filter((member) => member.status === "accepted");
   const pendingMembers = members.filter((member) => member.status === "pending");
@@ -250,10 +226,10 @@ function GroupDetail() {
   }
   const pairwiseDebts = computePairwiseDebts(expenses, splitsByExpense);
   const visibleDebts = pairwiseDebts.filter((debt) => debt.from === userId || debt.to === userId);
-  const isCreator = group.created_by === userId;
+  const isCreator = group ? group.created_by === userId : false;
   const isMember = acceptedMembers.some((member) => member.user_id === userId);
 
-  // Client-side search filters
+  // Client-side search filters (Must be declared at the top level before early returns)
   const filteredAcceptedMembers = useMemo(() => {
     const q = memberSearchQuery.trim().toLowerCase().replace(/^@/, "");
     if (!q) return acceptedMembers;
@@ -287,6 +263,30 @@ function GroupDetail() {
       return dName.includes(q) || uName.includes(q);
     });
   }, [visibleDebts, profileMap, settlementSearchQuery, userId]);
+
+  if (groupQuery.isLoading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (groupQuery.isError) {
+    return (
+      <div className="space-y-3 py-16 text-center">
+        <p className="text-sm font-medium text-foreground">Could not load this group.</p>
+        <p className="text-sm text-muted-foreground">{(groupQuery.error as Error).message}</p>
+        <Button variant="outline" size="sm" onClick={() => groupQuery.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (!group) {
+    return <div className="py-16 text-center text-sm text-muted-foreground">Group not found.</div>;
+  }
 
   return (
     <div className="space-y-6">

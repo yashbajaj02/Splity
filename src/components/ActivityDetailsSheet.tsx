@@ -162,21 +162,23 @@ export function ActivityDetailsSheet({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-w-md mx-auto max-h-[85vh] rounded-t-[24px]">
-        <DrawerHeader className="px-6 pt-3 pb-4 text-left border-b border-border/50">
-          <div className="flex items-start justify-between gap-4">
+      <DrawerContent className="max-w-md w-full mx-auto max-h-[85vh] rounded-t-[24px]">
+        <DrawerHeader className="px-4 sm:px-6 pt-3 pb-4 text-left border-b border-border/50">
+          <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <DrawerTitle className="font-display text-xl font-bold truncate flex items-center gap-2">
+              <DrawerTitle className="font-display text-lg sm:text-xl font-bold truncate flex items-center gap-2">
                 {isPayment ? (
                   <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
                 ) : (
                   <Receipt className="h-5 w-5 text-primary shrink-0" />
                 )}
-                {isPayment
-                  ? "Payment Details"
-                  : isExpense
-                    ? "Expense Details"
-                    : "Pending Balance"}
+                <span className="truncate">
+                  {isPayment
+                    ? "Payment Details"
+                    : isExpense
+                      ? "Expense Details"
+                      : "Pending Balance"}
+                </span>
               </DrawerTitle>
               {groupName && (
                 <p className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -185,14 +187,14 @@ export function ActivityDetailsSheet({
               )}
             </div>
 
-            <div className="flex items-center gap-1 bg-secondary/60 px-2.5 py-1 rounded-full text-[11px] font-medium text-muted-foreground shrink-0">
+            <div className="flex items-center gap-1 bg-secondary/60 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-medium text-muted-foreground shrink-0">
               <ShieldCheck className="h-3.5 w-3.5 text-primary" />
               Private View
             </div>
           </div>
         </DrawerHeader>
 
-        <div className="p-6 overflow-y-auto space-y-4">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-4">
           {isLoading ? (
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />

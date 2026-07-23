@@ -87,14 +87,14 @@ export function ProfileForm({
       }}
     >
       {showAvatar && (
-        <div className="flex flex-col items-center gap-2 rounded-xl bg-secondary/45 px-4 py-5 text-center">
-          <Avatar className="h-20 w-20 border border-border">
+        <div className="flex flex-col items-center gap-1.5 rounded-xl bg-secondary/45 px-4 py-3 text-center">
+          <Avatar className="h-16 w-16 border border-border">
             <AvatarImage src={existing.avatar_url ?? undefined} alt={fullName || email} />
-            <AvatarFallback className="bg-card font-display text-xl text-primary">
+            <AvatarFallback className="bg-card font-display text-lg text-primary">
               {getInitials(fullName, email)}
             </AvatarFallback>
           </Avatar>
-          <p className="text-xs text-muted-foreground">Avatar</p>
+          <p className="text-[11px] text-muted-foreground">Avatar</p>
         </div>
       )}
       <div className="space-y-1.5">
@@ -140,18 +140,19 @@ export function ProfileForm({
           </div>
         </div>
       )}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
         {onCancel && (
           <Button
             type="button"
             variant="outline"
+            className="w-full sm:w-auto"
             onClick={onCancel}
             disabled={mutation.isPending}
           >
             Cancel
           </Button>
         )}
-        <Button type="submit" className={onCancel ? "" : "w-full"} disabled={mutation.isPending}>
+        <Button type="submit" className="w-full sm:w-auto" disabled={mutation.isPending}>
           {mutation.isPending && (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           )}

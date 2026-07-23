@@ -227,7 +227,7 @@ function ProfilePage() {
         onOpenChange={setPasswordDialogOpen}
       />
       <Dialog open={profileDialogOpen} onOpenChange={setProfileDialogOpen}>
-        <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-6 shadow-xl sm:mx-0">
+        <DialogContent className="max-w-md border-border bg-card p-4 sm:p-6 shadow-xl">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">Edit Profile</DialogTitle>
             <DialogDescription>
@@ -266,9 +266,9 @@ function ProfileDetail({
   return (
     <div className="flex min-w-0 items-start gap-2 rounded-lg bg-secondary/45 px-3 py-2">
       <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-xs font-medium text-muted-foreground">{label}</p>
-        <p className="truncate text-sm font-semibold text-foreground">{value}</p>
+        <p className="truncate text-sm font-semibold text-foreground break-all">{value}</p>
       </div>
     </div>
   );

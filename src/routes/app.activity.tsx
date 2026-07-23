@@ -97,20 +97,20 @@ function ActivityPage() {
     [groupsQuery.data],
   );
 
-  const senderIds = useMemo(() => {
+  const profileIds = useMemo(() => {
     return Array.from(
       new Set(
         (notifQuery.data ?? [])
-          .map((notification) => notification.sender_id)
+          .flatMap((n) => [n.sender_id, n.recipient_id])
           .filter(Boolean),
       ),
     ) as string[];
   }, [notifQuery.data]);
 
   const profilesQuery = useQuery({
-    queryKey: ["notification-senders", senderIds.sort().join(",")],
-    queryFn: () => getNotificationSenderProfiles(senderIds),
-    enabled: senderIds.length > 0,
+    queryKey: ["notification-senders", profileIds.sort().join(",")],
+    queryFn: () => getNotificationSenderProfiles(profileIds),
+    enabled: profileIds.length > 0,
     staleTime: 60_000,
   });
 
@@ -180,7 +180,7 @@ function ActivityPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold">Activity</h1>
           <p className="text-sm text-muted-foreground">
@@ -188,7 +188,7 @@ function ActivityPage() {
           </p>
         </div>
         {notifications.length > 0 ? (
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {pendingCount > 0 ? (
               <Button
                 size="sm"
@@ -247,6 +247,9 @@ function ActivityPage() {
               senderProfile={
                 notification.sender_id ? profileMap.get(notification.sender_id) : undefined
               }
+              recipientProfile={
+                notification.recipient_id ? profileMap.get(notification.recipient_id) : undefined
+              }
               groupName={notification.group_id ? groupMap.get(notification.group_id) : undefined}
               currentUserId={userId}
               onAccept={() =>
@@ -274,9 +277,19 @@ function ActivityPage() {
   );
 }
 
+function cleanExpenseTitle(message: string | null): string {
+  if (!message) return "Expense";
+  let str = message.trim();
+  str = str.replace(/^added\s*"/i, "").replace(/^added\s+/i, "");
+  str = str.replace(/"\s*in\s*".*$/i, "").replace(/\s*in\s*".*$/i, "");
+  str = str.replace(/^"/, "").replace(/"$/, "");
+  return str.trim() || "Expense";
+}
+
 const NotificationCard = memo(function NotificationCard({
   notification,
   senderProfile,
+  recipientProfile,
   groupName,
   currentUserId,
   onAccept,
@@ -287,6 +300,7 @@ const NotificationCard = memo(function NotificationCard({
 }: {
   notification: AppNotification;
   senderProfile?: Profile;
+  recipientProfile?: Profile;
   groupName?: string;
   currentUserId: string;
   onAccept: () => void;
@@ -305,33 +319,43 @@ const NotificationCard = memo(function NotificationCard({
   const pending = notification.status === "pending";
 
   const isSenderCurrentUser = notification.sender_id === currentUserId;
+  
   const senderDisplayName = isSenderCurrentUser
     ? "You"
     : senderProfile?.full_name?.trim() ||
-      senderProfile?.username?.trim() ||
-      notification.sender_username ||
+      senderProfile?.username?.replace(/^@/, "").trim() ||
       "Someone";
+
+  const recipientDisplayName = recipientProfile?.full_name?.trim() ||
+    recipientProfile?.username?.replace(/^@/, "").trim() ||
+    "User";
 
   const counterpartyId = notification.sender_id || "";
 
+  let cardDisplayName = senderDisplayName;
   let actionText = "";
   let noteText = "";
 
   if (isExpenseAdded) {
+    cardDisplayName = senderDisplayName;
     actionText = "Added an expense";
-    noteText = notification.message || "Expense";
+    noteText = cleanExpenseTitle(notification.message);
   } else if (isSettlementRequest) {
+    cardDisplayName = senderDisplayName;
     actionText = "Requested a settlement";
     noteText = "Pending Balance";
   } else if (isSettlementConfirmed) {
     if (isSenderCurrentUser) {
-      actionText = `Paid ${senderDisplayName}`;
+      cardDisplayName = "You";
+      actionText = `Paid ${recipientDisplayName}`;
       noteText = notification.message?.toLowerCase().includes("upi") ? "UPI" : "Cash";
     } else {
+      cardDisplayName = senderDisplayName;
       actionText = "Paid you";
       noteText = notification.message?.toLowerCase().includes("upi") ? "UPI" : "Cash";
     }
   } else if (isInvite) {
+    cardDisplayName = senderDisplayName;
     actionText = "Invited you to join group";
   }
 
@@ -354,7 +378,7 @@ const NotificationCard = memo(function NotificationCard({
     <>
       <div
         onClick={handleCardClick}
-        className="flex items-center gap-3.5 rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-secondary/30 cursor-pointer select-none"
+        className="flex items-start sm:items-center gap-3 sm:gap-3.5 rounded-2xl border border-border bg-card p-3.5 sm:p-4 shadow-sm transition-colors hover:bg-secondary/30 cursor-pointer select-none overflow-hidden"
       >
         <div
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
@@ -375,21 +399,18 @@ const NotificationCard = memo(function NotificationCard({
         </div>
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="font-semibold text-foreground text-sm">{senderDisplayName}</span>
-            {groupName && (
-              <span className="text-xs text-muted-foreground font-medium">({groupName})</span>
-            )}
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
+            <span className="font-semibold text-foreground text-sm truncate max-w-full">{cardDisplayName}</span>
           </div>
 
-          <p className="text-xs text-muted-foreground mt-0.5">{actionText}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 break-words">{actionText}</p>
 
-          <p className="text-xs text-muted-foreground mt-1 font-medium">
+          <p className="text-[11px] sm:text-xs text-muted-foreground mt-1 font-medium">
             {formatActivityTime(notification.created_at)}
           </p>
 
           {isInvite && pending ? (
-            <div className="mt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
+            <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
               <Button size="sm" onClick={onAccept} disabled={busy}>
                 <Check className="mr-1 h-4 w-4" /> Accept
               </Button>
@@ -400,14 +421,14 @@ const NotificationCard = memo(function NotificationCard({
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 text-right">
+        <div className="flex items-center gap-2 shrink-0 text-right ml-auto pl-1">
           {notification.amount != null ? (
             <div>
-              <p className="font-display font-bold text-base text-foreground">
+              <p className="font-display font-bold text-sm sm:text-base text-foreground whitespace-nowrap">
                 <CountUpCurrency amount={Number(notification.amount)} />
               </p>
               {noteText && (
-                <p className="text-xs text-muted-foreground mt-0.5 font-medium">{noteText}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 font-medium whitespace-nowrap">{noteText}</p>
               )}
             </div>
           ) : (
