@@ -1,6 +1,17 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState, memo, useMemo } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck, HandCoins, Loader2, UserPlus, X } from "lucide-react";
+import {
+  Bell,
+  Check,
+  CheckCheck,
+  HandCoins,
+  Loader2,
+  Receipt,
+  UserPlus,
+  X,
+  ChevronRight,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -11,15 +22,58 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   respondToInvite,
+  getMyGroups,
 } from "@/lib/api";
 import type { AppNotification, Profile } from "@/lib/app-types";
 import { Button } from "@/components/ui/button";
-import { QrPayDialog } from "@/components/QrPayDialog";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
+import { ActivityDetailsSheet } from "@/components/ActivityDetailsSheet";
 
 export const Route = createFileRoute("/app/activity")({
   component: ActivityPage,
 });
+
+function formatActivityTime(isoString: string): string {
+  const date = new Date(isoString);
+  if (isNaN(date.getTime())) return "";
+
+  const now = new Date();
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+
+  const isYesterday =
+    date.getDate() === now.getDate() - 1 &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear();
+
+  let hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  const timeStr = `${hours}:${minutes} ${ampm}`;
+
+  if (isToday) return `Today • ${timeStr}`;
+  if (isYesterday) return `Yesterday • ${timeStr}`;
+
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return `${date.getDate()} ${monthNames[date.getMonth()]} ${date.getFullYear()} • ${timeStr}`;
+}
 
 function ActivityPage() {
   const { session } = useAuth();
@@ -29,20 +83,40 @@ function ActivityPage() {
   const notifQuery = useQuery({
     queryKey: ["notifications", userId],
     queryFn: () => getNotifications(userId),
+    staleTime: 15_000,
   });
 
-  const senderIds = Array.from(
-    new Set((notifQuery.data ?? []).map((notification) => notification.sender_id).filter(Boolean)),
-  ) as string[];
+  const groupsQuery = useQuery({
+    queryKey: ["my-groups", userId],
+    queryFn: () => getMyGroups(userId),
+    staleTime: 60_000,
+  });
+
+  const groupMap = useMemo(
+    () => new Map((groupsQuery.data ?? []).map((g) => [g.id, g.name])),
+    [groupsQuery.data],
+  );
+
+  const senderIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        (notifQuery.data ?? [])
+          .map((notification) => notification.sender_id)
+          .filter(Boolean),
+      ),
+    ) as string[];
+  }, [notifQuery.data]);
 
   const profilesQuery = useQuery({
     queryKey: ["notification-senders", senderIds.sort().join(",")],
     queryFn: () => getNotificationSenderProfiles(senderIds),
     enabled: senderIds.length > 0,
+    staleTime: 60_000,
   });
 
-  const profileMap = new Map<string, Profile>(
-    (profilesQuery.data ?? []).map((profile) => [profile.id, profile]),
+  const profileMap = useMemo(
+    () => new Map<string, Profile>((profilesQuery.data ?? []).map((p) => [p.id, p])),
+    [profilesQuery.data],
   );
 
   const invalidate = () => {
@@ -99,9 +173,10 @@ function ActivityPage() {
   });
 
   const notifications = notifQuery.data ?? [];
-  const pendingCount = notifications.filter(
-    (notification) => notification.status === "pending",
-  ).length;
+  const pendingCount = useMemo(
+    () => notifications.filter((n) => n.status === "pending").length,
+    [notifications],
+  );
 
   return (
     <div className="space-y-5">
@@ -138,7 +213,7 @@ function ActivityPage() {
         ) : null}
       </div>
 
-      {notifQuery.isLoading ? (
+      {notifQuery.isLoading && notifications.length === 0 ? (
         <div className="flex justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
         </div>
@@ -169,7 +244,11 @@ function ActivityPage() {
             <NotificationCard
               key={notification.id}
               notification={notification}
-              sender={notification.sender_id ? profileMap.get(notification.sender_id) : undefined}
+              senderProfile={
+                notification.sender_id ? profileMap.get(notification.sender_id) : undefined
+              }
+              groupName={notification.group_id ? groupMap.get(notification.group_id) : undefined}
+              currentUserId={userId}
               onAccept={() =>
                 respond.mutate({
                   notificationId: notification.id,
@@ -195,18 +274,11 @@ function ActivityPage() {
   );
 }
 
-function resolveSender(notification: AppNotification, profile?: Profile) {
-  const username = profile?.username ?? notification.sender_username;
-  const upiId = profile?.upi_id ?? notification.sender_upi;
-  const name = username
-    ? `@${username}`
-    : profile?.full_name?.trim() || notification.sender_username || "Someone";
-  return { name, upiId };
-}
-
-function NotificationCard({
+const NotificationCard = memo(function NotificationCard({
   notification,
-  sender,
+  senderProfile,
+  groupName,
+  currentUserId,
   onAccept,
   onDecline,
   onDismiss,
@@ -214,67 +286,110 @@ function NotificationCard({
   busy,
 }: {
   notification: AppNotification;
-  sender?: Profile;
+  senderProfile?: Profile;
+  groupName?: string;
+  currentUserId: string;
   onAccept: () => void;
   onDecline: () => void;
   onDismiss: () => void;
   onMarkRead: () => void;
   busy: boolean;
 }) {
-  const { name: senderName, upiId: senderUpi } = resolveSender(notification, sender);
+  const navigate = useNavigate();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
   const isInvite = notification.type === "group_invite";
-  const isSettlement = notification.type === "settlement_request";
+  const isSettlementRequest = notification.type === "settlement_request";
   const isSettlementConfirmed = notification.type === "settlement_confirmed";
   const isExpenseAdded = notification.type === "expense_added";
   const pending = notification.status === "pending";
-  const canOpenGroup = isInvite && !!notification.group_id && notification.status === "accepted";
+
+  const isSenderCurrentUser = notification.sender_id === currentUserId;
+  const senderDisplayName = isSenderCurrentUser
+    ? "You"
+    : senderProfile?.full_name?.trim() ||
+      senderProfile?.username?.trim() ||
+      notification.sender_username ||
+      "Someone";
+
+  const counterpartyId = notification.sender_id || "";
+
+  let actionText = "";
+  let noteText = "";
+
+  if (isExpenseAdded) {
+    actionText = "Added an expense";
+    noteText = notification.message || "Expense";
+  } else if (isSettlementRequest) {
+    actionText = "Requested a settlement";
+    noteText = "Pending Balance";
+  } else if (isSettlementConfirmed) {
+    if (isSenderCurrentUser) {
+      actionText = `Paid ${senderDisplayName}`;
+      noteText = notification.message?.toLowerCase().includes("upi") ? "UPI" : "Cash";
+    } else {
+      actionText = "Paid you";
+      noteText = notification.message?.toLowerCase().includes("upi") ? "UPI" : "Cash";
+    }
+  } else if (isInvite) {
+    actionText = "Invited you to join group";
+  }
+
+  const handleCardClick = () => {
+    if (isInvite) {
+      if (notification.group_id) {
+        navigate({ to: "/app/group/$groupId", params: { groupId: notification.group_id } });
+      }
+      return;
+    }
+    if (counterpartyId) {
+      setSheetOpen(true);
+      if (pending) {
+        onMarkRead();
+      }
+    }
+  };
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex items-start gap-3">
+    <>
+      <div
+        onClick={handleCardClick}
+        className="flex items-center gap-3.5 rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-secondary/30 cursor-pointer select-none"
+      >
         <div
           className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
-            isInvite ? "bg-secondary text-primary" : "bg-accent/30 text-accent-foreground"
+            isInvite
+              ? "bg-secondary text-primary"
+              : isExpenseAdded
+                ? "bg-primary/10 text-primary"
+                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           }`}
         >
           {isInvite ? (
             <UserPlus className="h-5 w-5" />
           ) : isExpenseAdded ? (
-            <Bell className="h-5 w-5" />
+            <Receipt className="h-5 w-5" />
           ) : (
             <HandCoins className="h-5 w-5" />
           )}
         </div>
+
         <div className="min-w-0 flex-1">
-          <p className="text-sm">
-            <span className="font-semibold">{senderName}</span>{" "}
-            {isSettlement && notification.amount != null ? (
-              <>
-                requested{" "}
-                <strong>
-                  <CountUpCurrency amount={Number(notification.amount)} />
-                </strong>
-                {notification.message ? ` - ${notification.message}` : ""}
-              </>
-            ) : isSettlementConfirmed && notification.amount != null ? (
-              <>
-                confirmed{" "}
-                <strong>
-                  <CountUpCurrency amount={Number(notification.amount)} />
-                </strong>{" "}
-                {notification.message ?? "as paid."}
-              </>
-            ) : (
-              notification.message
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold text-foreground text-sm">{senderDisplayName}</span>
+            {groupName && (
+              <span className="text-xs text-muted-foreground font-medium">({groupName})</span>
             )}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {new Date(notification.created_at).toLocaleString()}
-            {!pending ? ` · ${notification.status}` : ""}
+          </div>
+
+          <p className="text-xs text-muted-foreground mt-0.5">{actionText}</p>
+
+          <p className="text-xs text-muted-foreground mt-1 font-medium">
+            {formatActivityTime(notification.created_at)}
           </p>
 
           {isInvite && pending ? (
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex gap-2" onClick={(e) => e.stopPropagation()}>
               <Button size="sm" onClick={onAccept} disabled={busy}>
                 <Check className="mr-1 h-4 w-4" /> Accept
               </Button>
@@ -283,66 +398,34 @@ function NotificationCard({
               </Button>
             </div>
           ) : null}
+        </div>
 
-          {canOpenGroup ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" asChild>
-                <Link to="/app/group/$groupId" params={{ groupId: notification.group_id! }}>
-                  Open group
-                </Link>
-              </Button>
-              <Button size="sm" variant="outline" onClick={onDismiss} disabled={busy}>
-                Dismiss
-              </Button>
+        <div className="flex items-center gap-2 shrink-0 text-right">
+          {notification.amount != null ? (
+            <div>
+              <p className="font-display font-bold text-base text-foreground">
+                <CountUpCurrency amount={Number(notification.amount)} />
+              </p>
+              {noteText && (
+                <p className="text-xs text-muted-foreground mt-0.5 font-medium">{noteText}</p>
+              )}
             </div>
-          ) : null}
-
-          {isSettlement && pending ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <QrPayDialog
-                payeeName={senderName}
-                payeeUpiId={senderUpi}
-                amount={Number(notification.amount ?? 0)}
-                note="Splity settlement"
-              />
-              <Button size="sm" variant="outline" onClick={onMarkRead} disabled={busy}>
-                <CheckCheck className="mr-1 h-4 w-4" /> Mark as read
-              </Button>
-            </div>
-          ) : null}
-
-          {(isSettlementConfirmed || isExpenseAdded) && pending ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={onMarkRead} disabled={busy}>
-                <CheckCheck className="mr-1 h-4 w-4" /> Mark as read
-              </Button>
-              {isExpenseAdded && notification.group_id ? (
-                <Button size="sm" asChild>
-                  <Link to="/app/group/$groupId" params={{ groupId: notification.group_id }}>
-                    Open group
-                  </Link>
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
-
-          {!pending && !isInvite ? (
-            <div className="mt-3">
-              <Button size="sm" variant="ghost" onClick={onDismiss} disabled={busy}>
-                Dismiss
-              </Button>
-            </div>
-          ) : null}
-
-          {isInvite && notification.status === "declined" ? (
-            <div className="mt-3">
-              <Button size="sm" variant="ghost" onClick={onDismiss} disabled={busy}>
-                Dismiss
-              </Button>
-            </div>
-          ) : null}
+          ) : (
+            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+          )}
         </div>
       </div>
-    </div>
+
+      {counterpartyId ? (
+        <ActivityDetailsSheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          currentUserId={currentUserId}
+          counterpartyId={counterpartyId}
+          notification={notification}
+          groupName={groupName}
+        />
+      ) : null}
+    </>
   );
-}
+});

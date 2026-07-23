@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, memo, lazy, Suspense } from "react";
+import { useEffect, useState, useMemo, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarDays, Clock, Loader2, LogOut, Receipt, Trash2, UserPlus, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock, HandCoins, Loader2, LogOut, Receipt, Search, Trash2, UserPlus, Users, ChevronDown, ChevronRight, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -24,9 +24,11 @@ const AddExpenseDialog = lazy(() => import("@/components/AddExpenseDialog").then
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { QrPayDialog } from "@/components/QrPayDialog";
 import { PaidDialog } from "@/components/PaidDialog";
+import { ExpenseBreakdownSheet } from "@/components/ExpenseBreakdownSheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,8 +63,11 @@ function GroupDetail() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [visibleExpenseCount, setVisibleExpenseCount] = useState(5);
+  const [activeDropdown, setActiveDropdown] = useState<"members" | "settlements" | null>(null);
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
+  const [settlementSearchQuery, setSettlementSearchQuery] = useState("");
 
-  // Derive fromDate / toDate from the current preset — same values the old inputs produced
+  // Derive fromDate / toDate from the current preset
   const { fromDate, toDate } = (() => {
     const pad = (n: number) => String(n).padStart(2, "0");
     const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -112,9 +117,19 @@ function GroupDetail() {
     enabled: memberIds.length > 0,
   });
 
-  const profileMap = new Map<string, Profile>(
-    (profilesQuery.data ?? []).map((profile) => [profile.id, profile]),
+  const profileMap = useMemo(
+    () => new Map<string, Profile>((profilesQuery.data ?? []).map((profile) => [profile.id, profile])),
+    [profilesQuery.data],
   );
+
+  const nameOfDisplay = (id: string) => {
+    const profile = profileMap.get(id);
+    if (id === userId) return "You";
+    if (profile?.full_name?.trim()) return profile.full_name.trim();
+    if (profile?.username?.trim()) return profile.username.trim();
+    return "User";
+  };
+
   const nameOf = (id: string) => {
     const profile = profileMap.get(id);
     if (id === userId) return `You${profile?.username ? ` (@${profile.username})` : ""}`;
@@ -238,6 +253,41 @@ function GroupDetail() {
   const isCreator = group.created_by === userId;
   const isMember = acceptedMembers.some((member) => member.user_id === userId);
 
+  // Client-side search filters
+  const filteredAcceptedMembers = useMemo(() => {
+    const q = memberSearchQuery.trim().toLowerCase().replace(/^@/, "");
+    if (!q) return acceptedMembers;
+    return acceptedMembers.filter((m) => {
+      const p = profileMap.get(m.user_id);
+      const dName = (p?.full_name ?? "").toLowerCase();
+      const uName = (p?.username ?? "").toLowerCase();
+      return dName.includes(q) || uName.includes(q);
+    });
+  }, [acceptedMembers, profileMap, memberSearchQuery]);
+
+  const filteredPendingMembers = useMemo(() => {
+    const q = memberSearchQuery.trim().toLowerCase().replace(/^@/, "");
+    if (!q) return pendingMembers;
+    return pendingMembers.filter((m) => {
+      const p = profileMap.get(m.user_id);
+      const dName = (p?.full_name ?? "").toLowerCase();
+      const uName = (p?.username ?? "").toLowerCase();
+      return dName.includes(q) || uName.includes(q);
+    });
+  }, [pendingMembers, profileMap, memberSearchQuery]);
+
+  const filteredDebts = useMemo(() => {
+    const q = settlementSearchQuery.trim().toLowerCase().replace(/^@/, "");
+    if (!q) return visibleDebts;
+    return visibleDebts.filter((d) => {
+      const counterpartyId = d.to === userId ? d.from : d.to;
+      const p = profileMap.get(counterpartyId);
+      const dName = (p?.full_name ?? "").toLowerCase();
+      const uName = (p?.username ?? "").toLowerCase();
+      return dName.includes(q) || uName.includes(q);
+    });
+  }, [visibleDebts, profileMap, settlementSearchQuery, userId]);
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -273,54 +323,250 @@ function GroupDetail() {
         </div>
       </div>
 
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-sm font-semibold text-muted-foreground">
-            Members ({acceptedMembers.length})
-          </h2>
-          <InviteDialog groupId={groupId} groupName={group.name} inviterId={userId} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {acceptedMembers.map((member) => (
-            <span
-              key={member.id}
-              className="rounded-full bg-secondary px-3 py-1 text-sm font-medium text-primary"
+      {/* ── Top Row: Floating Dropdowns for Members & Pending Settlements ── */}
+      <div className="grid grid-cols-2 gap-3 w-full relative">
+        {/* Members Dropdown */}
+        <Popover
+          open={activeDropdown === "members"}
+          onOpenChange={(open) => {
+            setActiveDropdown(open ? "members" : null);
+            if (!open) setMemberSearchQuery("");
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className="w-full justify-between h-11 px-4 rounded-2xl border-border/80 bg-card hover:bg-secondary/40 text-foreground font-medium shadow-sm transition-all active:scale-[0.98]"
             >
-              {nameOf(member.user_id)}
-            </span>
-          ))}
-          {pendingMembers.map((member) => (
-            <span
-              key={member.id}
-              className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-3 py-1 text-sm text-muted-foreground"
-            >
-              <Clock className="h-3 w-3" /> {nameOf(member.user_id)}
-            </span>
-          ))}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="font-display text-sm font-semibold text-muted-foreground">Who owes whom</h2>
-        {visibleDebts.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
-            Everyone's settled up.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {visibleDebts.map((debt) => (
-              <DebtRow
-                key={`${debt.from}-${debt.to}`}
-                debt={debt}
-                userId={userId}
-                nameOf={nameOf}
-                payeeUpiId={profileMap.get(debt.to)?.upi_id ?? null}
-                groupId={groupId}
+              <span className="flex items-center gap-2 font-display text-sm font-semibold truncate">
+                <Users className="h-4 w-4 text-primary shrink-0" />
+                <span className="truncate">Members ({acceptedMembers.length + pendingMembers.length})</span>
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 ${
+                  activeDropdown === "members" ? "rotate-180 text-primary" : ""
+                }`}
               />
-            ))}
-          </div>
-        )}
-      </section>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="start"
+            side="bottom"
+            sideOffset={6}
+            className="z-50 w-[92vw] sm:w-[360px] rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-md p-0 text-popover-foreground shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 duration-180 ease-out origin-top overflow-hidden"
+          >
+            {/* Header & Sticky Search Bar */}
+            <div className="p-3.5 border-b border-border/60 bg-popover/80 backdrop-blur-sm sticky top-0 z-10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-sm font-bold flex items-center gap-2">
+                  <Users className="h-4 w-4 text-primary" />
+                  Members ({acceptedMembers.length + pendingMembers.length})
+                </h3>
+                <InviteDialog groupId={groupId} groupName={group.name} inviterId={userId} />
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  type="text"
+                  placeholder="Search member..."
+                  value={memberSearchQuery}
+                  onChange={(e) => setMemberSearchQuery(e.target.value)}
+                  className="pl-8 pr-8 h-9 text-xs rounded-xl bg-secondary/50 border-border/60 focus-visible:ring-primary/40"
+                />
+                {memberSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setMemberSearchQuery("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-[320px] overflow-y-auto p-2 space-y-1">
+              {filteredAcceptedMembers.length === 0 && filteredPendingMembers.length === 0 ? (
+                <div className="p-6 text-center space-y-1.5">
+                  <div className="text-2xl">🔍</div>
+                  <p className="text-sm font-semibold text-foreground">No members found</p>
+                  <p className="text-xs text-muted-foreground">Try another name or username.</p>
+                </div>
+              ) : (
+                <>
+                  {filteredAcceptedMembers.map((member, index) => {
+                    const profile = profileMap.get(member.user_id);
+                    const displayName = nameOfDisplay(member.user_id);
+                    const username = profile?.username?.trim() ?? "";
+                    const initials = displayName.slice(0, 2).toUpperCase();
+                    const isYou = member.user_id === userId;
+                    const isOwner = member.user_id === group.created_by;
+                    return (
+                      <div key={member.id}>
+                        {index > 0 && <div className="h-px bg-border/40 my-1" />}
+                        <div className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/40 transition-colors">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-xs uppercase">
+                            {initials}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-foreground truncate">
+                              {displayName} {isYou && <span className="text-xs text-muted-foreground font-normal">(You)</span>}
+                            </p>
+                            {username && (
+                              <p className="text-xs text-muted-foreground truncate">
+                                @{username}
+                              </p>
+                            )}
+                          </div>
+                          {isOwner && (
+                            <span className="text-[11px] font-medium text-muted-foreground bg-secondary px-2 py-0.5 rounded-md shrink-0">
+                              Admin
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {filteredPendingMembers.map((member, index) => {
+                    const profile = profileMap.get(member.user_id);
+                    const displayName = nameOfDisplay(member.user_id);
+                    const username = profile?.username?.trim() ?? "";
+                    const initials = displayName.slice(0, 2).toUpperCase();
+                    return (
+                      <div key={member.id}>
+                        {(filteredAcceptedMembers.length > 0 || index > 0) && <div className="h-px bg-border/40 my-1" />}
+                        <div className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/40 transition-colors opacity-75">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-bold text-xs uppercase">
+                            {initials}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-foreground truncate">
+                              {displayName}
+                            </p>
+                            {username && (
+                              <p className="text-xs text-muted-foreground truncate">
+                                @{username}
+                              </p>
+                            )}
+                          </div>
+                          <span className="text-[11px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1">
+                            <Clock className="h-3 w-3" /> Pending
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        {/* Pending Settlements Dropdown */}
+        <Popover
+          open={activeDropdown === "settlements"}
+          onOpenChange={(open) => {
+            setActiveDropdown(open ? "settlements" : null);
+            if (!open) setSettlementSearchQuery("");
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              className="w-full justify-between h-11 px-4 rounded-2xl border-border/80 bg-card hover:bg-secondary/40 text-foreground font-medium shadow-sm transition-all active:scale-[0.98]"
+            >
+              <span className="flex items-center gap-2 font-display text-sm font-semibold truncate">
+                <HandCoins className="h-4 w-4 text-primary shrink-0" />
+                <span className="truncate">Pending Settlements ({visibleDebts.length})</span>
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 ${
+                  activeDropdown === "settlements" ? "rotate-180 text-primary" : ""
+                }`}
+              />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            align="end"
+            side="bottom"
+            sideOffset={6}
+            className="z-50 w-[92vw] sm:w-[360px] rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-md p-0 text-popover-foreground shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 duration-180 ease-out origin-top overflow-hidden"
+          >
+            {/* Header & Sticky Search Bar */}
+            <div className="p-3.5 border-b border-border/60 bg-popover/80 backdrop-blur-sm sticky top-0 z-10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-sm font-bold flex items-center gap-2">
+                  <HandCoins className="h-4 w-4 text-primary" />
+                  Pending Settlements ({visibleDebts.length})
+                </h3>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  type="text"
+                  placeholder="Search member or username..."
+                  value={settlementSearchQuery}
+                  onChange={(e) => setSettlementSearchQuery(e.target.value)}
+                  className="pl-8 pr-8 h-9 text-xs rounded-xl bg-secondary/50 border-border/60 focus-visible:ring-primary/40"
+                />
+                {settlementSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSettlementSearchQuery("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="max-h-[320px] overflow-y-auto p-2 space-y-1">
+              {visibleDebts.length === 0 ? (
+                <p className="p-4 text-center text-xs text-muted-foreground">
+                  Everyone's settled up!
+                </p>
+              ) : filteredDebts.length === 0 ? (
+                <div className="p-6 text-center space-y-1.5">
+                  <div className="text-2xl">🔍</div>
+                  <p className="text-sm font-semibold text-foreground">No members found</p>
+                  <p className="text-xs text-muted-foreground">Try another name or username.</p>
+                </div>
+              ) : (
+                filteredDebts.map((debt, index) => {
+                  const isOwed = debt.to === userId;
+                  const counterpartyId = isOwed ? debt.from : debt.to;
+                  const counterpartyName = nameOfDisplay(counterpartyId);
+                  const counterpartyUsername = profileMap.get(counterpartyId)?.username ?? null;
+                  const counterpartyInitials = counterpartyName.slice(0, 2).toUpperCase();
+                  const payeeUpiId = profileMap.get(debt.to)?.upi_id ?? null;
+
+                  return (
+                    <div key={`${debt.from}-${debt.to}`}>
+                      {index > 0 && <div className="h-px bg-border/40 my-1" />}
+                      <PendingSettlementDropdownRow
+                        debt={debt}
+                        userId={userId}
+                        counterpartyName={counterpartyName}
+                        counterpartyUsername={counterpartyUsername}
+                        counterpartyInitials={counterpartyInitials}
+                        groupName={group.name}
+                        payeeUpiId={payeeUpiId}
+                        groupId={groupId}
+                        counterpartyId={counterpartyId}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
@@ -369,8 +615,7 @@ function GroupDetail() {
                 key={expense.id}
                 expense={expense}
                 currentUserId={userId}
-                creatorName={nameOf(expense.created_by)}
-                payerName={nameOf(expense.paid_by)}
+                creatorDisplayName={nameOfDisplay(expense.created_by)}
                 canRemove={canDeleteExpense(expense, userId)}
                 removeBusy={removeExpenseMutation.isPending}
                 onRemove={() => removeExpenseMutation.mutate(expense.id)}
@@ -526,6 +771,79 @@ function DateRangeFilter({
   );
 }
 
+const PendingSettlementDropdownRow = memo(function PendingSettlementDropdownRow({
+  debt,
+  userId,
+  counterpartyName,
+  counterpartyUsername,
+  counterpartyInitials,
+  groupName,
+  payeeUpiId,
+  groupId,
+  counterpartyId,
+}: {
+  debt: PairwiseDebt;
+  userId: string;
+  counterpartyName: string;
+  counterpartyUsername?: string | null;
+  counterpartyInitials: string;
+  groupName: string;
+  payeeUpiId: string | null;
+  groupId: string;
+  counterpartyId: string;
+}) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const isYouOwe = debt.from === userId;
+
+  return (
+    <>
+      <div
+        onClick={() => setSheetOpen(true)}
+        className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/50 transition-colors cursor-pointer group select-none"
+      >
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-primary text-xs font-bold uppercase group-hover:scale-105 transition-transform">
+          {counterpartyInitials}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center min-w-0 gap-1.5">
+            <span className="text-sm font-semibold text-foreground shrink-0 group-hover:text-primary transition-colors">
+              {counterpartyName}
+            </span>
+            <span className="text-xs text-muted-foreground truncate max-w-[90px] sm:max-w-[120px]">
+              ({groupName})
+            </span>
+          </div>
+          {counterpartyUsername ? (
+            <p className="text-xs text-muted-foreground truncate">
+              @{counterpartyUsername}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {isYouOwe ? "You owe" : "Owes you"}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`text-sm font-display font-bold ${isYouOwe ? "text-destructive" : "text-primary"}`}>
+            ₹{debt.amount.toFixed(2)}
+          </span>
+          <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+        </div>
+      </div>
+
+      <ExpenseBreakdownSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        currentUserId={userId}
+        counterpartyId={counterpartyId}
+        displayName={counterpartyName}
+        groupName={groupName}
+        balanceAmount={debt.amount}
+      />
+    </>
+  );
+});
+
 const DebtRow = memo(function DebtRow({
   debt,
   userId,
@@ -582,24 +900,78 @@ const DebtRow = memo(function DebtRow({
   );
 });
 
+function formatCardDate(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+  const day = d.getDate();
+  const monthNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const month = monthNames[d.getMonth()];
+  const year = d.getFullYear();
+
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, "0");
+  const ampm = hours >= 12 ? "PM" : "AM";
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+
+  return `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
+}
+
 const ExpenseRow = memo(function ExpenseRow({
   expense,
   currentUserId,
-  creatorName,
-  payerName,
+  creatorDisplayName,
   canRemove,
   removeBusy,
   onRemove,
 }: {
   expense: Expense;
   currentUserId: string;
-  creatorName: string;
-  payerName: string;
+  creatorDisplayName: string;
   canRemove: boolean;
   removeBusy: boolean;
   onRemove: () => void;
 }) {
   const canShowRemove = expense.created_by === currentUserId && canRemove;
+  const descLower = expense.description.toLowerCase();
+  const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+
+  let title = expense.description;
+  let secondLine = "";
+  let paymentMethod = "";
+
+  if (isSettlement) {
+    const isUpi = descLower.includes("upi") || descLower.includes("online");
+    title = isUpi ? "UPI Settlement" : "Cash Settlement";
+    paymentMethod = isUpi ? "UPI" : "Cash";
+
+    if (expense.created_by === currentUserId) {
+      secondLine = "Settled by You";
+    } else {
+      secondLine = `Settled with ${creatorDisplayName}`;
+    }
+  } else {
+    if (expense.created_by === currentUserId) {
+      secondLine = "Added by You";
+    } else {
+      secondLine = `Added by ${creatorDisplayName}`;
+    }
+  }
+
+  const thirdLine = formatCardDate(expense.created_at);
 
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -607,15 +979,19 @@ const ExpenseRow = memo(function ExpenseRow({
         <Receipt className="h-5 w-5" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold">{expense.description}</p>
-        <p className="text-xs text-muted-foreground">
-          {creatorName} added · {payerName} paid · {new Date(expense.created_at).toLocaleString()}
-        </p>
+        <p className="truncate font-semibold">{title}</p>
+        <p className="text-xs text-muted-foreground">{secondLine}</p>
+        <p className="text-xs text-muted-foreground">{thirdLine}</p>
       </div>
       <div className="flex items-center gap-2">
-        <p className="font-display font-bold">
-          <CountUpCurrency amount={Number(expense.amount)} />
-        </p>
+        <div className="text-right">
+          <p className="font-display font-bold">
+            <CountUpCurrency amount={Number(expense.amount)} />
+          </p>
+          {isSettlement ? (
+            <p className="text-xs text-muted-foreground">{paymentMethod}</p>
+          ) : null}
+        </div>
         {canShowRemove ? (
           <AlertDialog>
             <AlertDialogTrigger asChild>

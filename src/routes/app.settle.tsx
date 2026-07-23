@@ -1,6 +1,7 @@
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Bell } from "lucide-react";
+import { Loader2, Bell, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
@@ -11,6 +12,7 @@ import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { Button } from "@/components/ui/button";
 import { QrPayDialog } from "@/components/QrPayDialog";
 import { PaidDialog } from "@/components/PaidDialog";
+import { ExpenseBreakdownSheet } from "@/components/ExpenseBreakdownSheet";
 
 export const Route = createFileRoute("/app/settle")({
   component: SettlePage,
@@ -75,16 +77,17 @@ function SettlePage() {
 
       <Section title="You owe" empty="You don't owe anyone. Nice!">
         {data.iOwe.map((b) => (
-          <BalanceRow key={b.counterpartyId} b={b} negative>
-            <div className="flex gap-2">
+          <BalanceRow key={b.counterpartyId} b={b} userId={userId} negative>
+            <div className="flex gap-2 shrink-0">
               <QrPayDialog
-                payeeName={b.profile?.username ? `@${b.profile.username}` : "them"}
+                payeeName={b.profile?.full_name?.trim() || b.profile?.username?.trim() || "them"}
                 payeeUpiId={b.profile?.upi_id ?? null}
                 amount={b.amount}
                 note="Splity settlement"
               />
               <PaidDialog
-                payeeName={b.profile?.username ? `@${b.profile.username}` : "them"}
+                payeeName={b.profile?.full_name?.trim() || b.profile?.username?.trim() || "them"}
+                groupName={b.settlementGroupName}
                 amount={b.amount}
                 groupId={b.settlementGroupId}
                 payeeId={b.counterpartyId}
@@ -97,19 +100,87 @@ function SettlePage() {
 
       <Section title="Owed to you" empty="No one owes you right now.">
         {data.owedToMe.map((b) => (
-          <BalanceRow key={b.counterpartyId} b={b}>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={remind.isPending}
-              onClick={() => remind.mutate({ debtorId: b.counterpartyId, amount: b.amount })}
-            >
-              <Bell className="mr-1.5 h-4 w-4" /> Remind
-            </Button>
+          <BalanceRow key={b.counterpartyId} b={b} userId={userId}>
+            <RemindButton
+              debtorId={b.counterpartyId}
+              isPending={remind.isPending}
+              onRemind={() => remind.mutate({ debtorId: b.counterpartyId, amount: b.amount })}
+            />
           </BalanceRow>
         ))}
       </Section>
     </div>
+  );
+}
+
+function RemindButton({
+  onRemind,
+  isPending,
+  debtorId,
+}: {
+  onRemind: () => void;
+  isPending: boolean;
+  debtorId: string;
+}) {
+  const [cooldownEnd, setCooldownEnd] = useState<number | null>(() => {
+    const saved = localStorage.getItem(`remind_cooldown_${debtorId}`);
+    if (!saved) return null;
+    const end = parseInt(saved, 10);
+    return end > Date.now() ? end : null;
+  });
+
+  const [remainingMs, setRemainingMs] = useState<number>(() => {
+    return cooldownEnd ? Math.max(0, cooldownEnd - Date.now()) : 0;
+  });
+
+  useEffect(() => {
+    if (!cooldownEnd) return;
+
+    const interval = setInterval(() => {
+      const left = cooldownEnd - Date.now();
+      if (left <= 0) {
+        setCooldownEnd(null);
+        setRemainingMs(0);
+        localStorage.removeItem(`remind_cooldown_${debtorId}`);
+      } else {
+        setRemainingMs(left);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [cooldownEnd, debtorId]);
+
+  const handleRemind = () => {
+    onRemind();
+    const end = Date.now() + 5 * 60 * 1000;
+    setCooldownEnd(end);
+    setRemainingMs(5 * 60 * 1000);
+    localStorage.setItem(`remind_cooldown_${debtorId}`, end.toString());
+  };
+
+  if (cooldownEnd && remainingMs > 0) {
+    const totalSec = Math.ceil(remainingMs / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = (totalSec % 60).toString().padStart(2, "0");
+
+    return (
+      <Button size="sm" variant="outline" disabled className="shrink-0 text-xs font-medium">
+        <Check className="mr-1 h-3.5 w-3.5 text-primary" />
+        Reminder Sent ({m}m {s}s)
+      </Button>
+    );
+  }
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={isPending}
+      onClick={handleRemind}
+      className="shrink-0"
+    >
+      <Bell className="mr-1.5 h-4 w-4" /> Remind
+    </Button>
   );
 }
 
@@ -140,25 +211,56 @@ function Section({
 function BalanceRow({
   b,
   negative,
+  userId,
   children,
 }: {
   b: Balance;
   negative?: boolean;
+  userId: string;
   children: React.ReactNode;
 }) {
-  const name = b.profile?.username ? `@${b.profile.username}` : "Unknown user";
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const displayName = b.profile?.full_name?.trim() || b.profile?.username?.trim() || "Unknown user";
+  const groupName = b.settlementGroupName;
+
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold uppercase text-primary">
-        {(b.profile?.username ?? "?").slice(0, 2)}
+    <>
+      <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm transition-colors hover:bg-secondary/30">
+        <div
+          onClick={() => setSheetOpen(true)}
+          className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer group select-none"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-sm font-semibold uppercase text-primary transition-transform group-hover:scale-105">
+            {displayName.slice(0, 2)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center min-w-0 gap-1.5">
+              <span className="font-semibold text-foreground shrink-0 group-hover:text-primary transition-colors">
+                {displayName}
+              </span>
+              {groupName && (
+                <span className="text-sm text-muted-foreground truncate max-w-[120px] sm:max-w-[180px]">
+                  ({groupName})
+                </span>
+              )}
+            </div>
+            <p className={`text-sm font-medium ${negative ? "text-destructive" : "text-success"}`}>
+              <CountUpCurrency amount={b.amount} />
+            </p>
+          </div>
+        </div>
+        {children}
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold">{name}</p>
-        <p className={`text-sm font-medium ${negative ? "text-destructive" : "text-success"}`}>
-          <CountUpCurrency amount={b.amount} />
-        </p>
-      </div>
-      {children}
-    </div>
+
+      <ExpenseBreakdownSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        currentUserId={userId}
+        counterpartyId={b.counterpartyId}
+        displayName={displayName}
+        groupName={groupName}
+        balanceAmount={b.amount}
+      />
+    </>
   );
 }

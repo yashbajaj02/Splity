@@ -13,6 +13,7 @@ export interface Balance {
   profile: Profile | undefined;
   counterpartyId: string;
   settlementGroupId: string | null;
+  settlementGroupName: string | null;
   amount: number;
 }
 
@@ -45,34 +46,42 @@ export function useSettleBalances(userId: string) {
 
       const memberArrays = await Promise.all(
         groups.map(async (group) => ({
-          groupId: group.id,
+          group,
           members: await getGroupMembers(group.id),
         })),
       );
-      const groupIdsByCounterparty = new Map<string, string>();
-      for (const { groupId, members } of memberArrays) {
+      const groupInfoByCounterparty = new Map<string, { id: string; name: string }>();
+      for (const { group, members } of memberArrays) {
         const acceptedIds = new Set(
           members.filter((m) => m.status === "accepted").map((m) => m.user_id),
         );
         if (!acceptedIds.has(userId)) continue;
         for (const id of ids) {
-          if (acceptedIds.has(id) && !groupIdsByCounterparty.has(id)) {
-            groupIdsByCounterparty.set(id, groupId);
+          if (acceptedIds.has(id) && !groupInfoByCounterparty.has(id)) {
+            groupInfoByCounterparty.set(id, { id: group.id, name: group.name });
           }
         }
       }
 
       return {
-        iOwe: iOwe.map<Balance>((x) => ({
-          ...x,
-          profile: pmap.get(x.counterpartyId),
-          settlementGroupId: groupIdsByCounterparty.get(x.counterpartyId) ?? null,
-        })),
-        owedToMe: owedToMe.map<Balance>((x) => ({
-          ...x,
-          profile: pmap.get(x.counterpartyId),
-          settlementGroupId: groupIdsByCounterparty.get(x.counterpartyId) ?? null,
-        })),
+        iOwe: iOwe.map<Balance>((x) => {
+          const g = groupInfoByCounterparty.get(x.counterpartyId);
+          return {
+            ...x,
+            profile: pmap.get(x.counterpartyId),
+            settlementGroupId: g?.id ?? null,
+            settlementGroupName: g?.name ?? null,
+          };
+        }),
+        owedToMe: owedToMe.map<Balance>((x) => {
+          const g = groupInfoByCounterparty.get(x.counterpartyId);
+          return {
+            ...x,
+            profile: pmap.get(x.counterpartyId),
+            settlementGroupId: g?.id ?? null,
+            settlementGroupName: g?.name ?? null,
+          };
+        }),
       };
     },
   });

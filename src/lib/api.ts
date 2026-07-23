@@ -7,6 +7,7 @@ import type {
   GroupMember,
   Profile,
 } from "./app-types";
+import { computePairwiseDebts } from "./debt";
 
 const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
 
@@ -366,48 +367,81 @@ export function canDeleteExpense(expense: Expense, userId: string, now = Date.no
   return now - new Date(expense.created_at).getTime() <= EXPENSE_DELETE_WINDOW_MS;
 }
 
+const settlementLocks = new Set<string>();
+
+async function getRemainingDebt(payerId: string, payeeId: string): Promise<number> {
+  const groups = await getMyGroups(payerId);
+  if (groups.length === 0) return 0;
+  const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
+  const allExpenses: Expense[] = expenseArrays.flat();
+  if (allExpenses.length === 0) return 0;
+  const splits = await getSplitsForExpenses(allExpenses.map((e) => e.id));
+  const splitsByExpense: Record<string, ExpenseSplit[]> = {};
+  for (const s of splits) {
+    (splitsByExpense[s.expense_id] ??= []).push(s);
+  }
+  const pairwiseDebts = computePairwiseDebts(allExpenses, splitsByExpense);
+  const debt = pairwiseDebts.find((d) => d.from === payerId && d.to === payeeId);
+  return debt ? debt.amount : 0;
+}
+
 export async function settleByCash(opts: {
   groupId: string;
   payerId: string;
   payeeId: string;
   amount: number;
 }) {
-  const payer = await getProfile(opts.payerId);
-  const expense = await addExpense({
-    groupId: opts.groupId,
-    createdBy: opts.payerId,
-    description: "Cash settlement",
-    amount: opts.amount,
-    splits: [{ userId: opts.payeeId, amount: opts.amount }],
-  });
-
-  const row = {
-    recipient_id: opts.payeeId,
-    sender_id: opts.payerId,
-    type: "settlement_confirmed" as const,
-    status: "pending" as const,
-    group_id: opts.groupId,
-    amount: opts.amount,
-    message: "paid you by cash",
-    sender_username: payer?.username ?? null,
-    sender_upi: payer?.upi_id ?? null,
-  };
-  let { error } = await supabase.from("notifications").insert(row);
-  if (error && /sender_username|column/i.test(error.message)) {
-    const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
-    ({ error } = await supabase.from("notifications").insert({
-      recipient_id,
-      sender_id,
-      type,
-      status,
-      group_id,
-      amount,
-      message,
-    }));
+  const lockKey = `${opts.payerId}->${opts.payeeId}`;
+  if (settlementLocks.has(lockKey)) {
+    throw new Error("Already Settled");
   }
-  if (error) throw error;
+  settlementLocks.add(lockKey);
 
-  return expense;
+  try {
+    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId);
+    if (remaining <= 0) {
+      throw new Error("Already Settled");
+    }
+
+    const payer = await getProfile(opts.payerId);
+    const expense = await addExpense({
+      groupId: opts.groupId,
+      createdBy: opts.payerId,
+      description: "Cash settlement",
+      amount: opts.amount,
+      splits: [{ userId: opts.payeeId, amount: opts.amount }],
+    });
+
+    const row = {
+      recipient_id: opts.payeeId,
+      sender_id: opts.payerId,
+      type: "settlement_confirmed" as const,
+      status: "pending" as const,
+      group_id: opts.groupId,
+      amount: opts.amount,
+      message: "paid you by cash",
+      sender_username: payer?.username ?? null,
+      sender_upi: payer?.upi_id ?? null,
+    };
+    let { error } = await supabase.from("notifications").insert(row);
+    if (error && /sender_username|column/i.test(error.message)) {
+      const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+      ({ error } = await supabase.from("notifications").insert({
+        recipient_id,
+        sender_id,
+        type,
+        status,
+        group_id,
+        amount,
+        message,
+      }));
+    }
+    if (error) throw error;
+
+    return expense;
+  } finally {
+    settlementLocks.delete(lockKey);
+  }
 }
 
 export async function settleByUpi(opts: {
@@ -416,42 +450,57 @@ export async function settleByUpi(opts: {
   payeeId: string;
   amount: number;
 }) {
-  const payer = await getProfile(opts.payerId);
-  const expense = await addExpense({
-    groupId: opts.groupId,
-    createdBy: opts.payerId,
-    description: "UPI settlement",
-    amount: opts.amount,
-    splits: [{ userId: opts.payeeId, amount: opts.amount }],
-  });
-
-  const row = {
-    recipient_id: opts.payeeId,
-    sender_id: opts.payerId,
-    type: "settlement_confirmed" as const,
-    status: "pending" as const,
-    group_id: opts.groupId,
-    amount: opts.amount,
-    message: "paid you online via UPI",
-    sender_username: payer?.username ?? null,
-    sender_upi: payer?.upi_id ?? null,
-  };
-  let { error } = await supabase.from("notifications").insert(row);
-  if (error && /sender_username|column/i.test(error.message)) {
-    const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
-    ({ error } = await supabase.from("notifications").insert({
-      recipient_id,
-      sender_id,
-      type,
-      status,
-      group_id,
-      amount,
-      message,
-    }));
+  const lockKey = `${opts.payerId}->${opts.payeeId}`;
+  if (settlementLocks.has(lockKey)) {
+    throw new Error("Already Settled");
   }
-  if (error) throw error;
+  settlementLocks.add(lockKey);
 
-  return expense;
+  try {
+    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId);
+    if (remaining <= 0) {
+      throw new Error("Already Settled");
+    }
+
+    const payer = await getProfile(opts.payerId);
+    const expense = await addExpense({
+      groupId: opts.groupId,
+      createdBy: opts.payerId,
+      description: "UPI settlement",
+      amount: opts.amount,
+      splits: [{ userId: opts.payeeId, amount: opts.amount }],
+    });
+
+    const row = {
+      recipient_id: opts.payeeId,
+      sender_id: opts.payerId,
+      type: "settlement_confirmed" as const,
+      status: "pending" as const,
+      group_id: opts.groupId,
+      amount: opts.amount,
+      message: "paid you online via UPI",
+      sender_username: payer?.username ?? null,
+      sender_upi: payer?.upi_id ?? null,
+    };
+    let { error } = await supabase.from("notifications").insert(row);
+    if (error && /sender_username|column/i.test(error.message)) {
+      const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+      ({ error } = await supabase.from("notifications").insert({
+        recipient_id,
+        sender_id,
+        type,
+        status,
+        group_id,
+        amount,
+        message,
+      }));
+    }
+    if (error) throw error;
+
+    return expense;
+  } finally {
+    settlementLocks.delete(lockKey);
+  }
 }
 
 /* ----------------------------- NOTIFICATIONS ---------------------------- */
@@ -472,6 +521,20 @@ export async function sendSettlementRequest(opts: {
   amount: number;
   message: string;
 }) {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: recentNotifs } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("sender_id", opts.senderId)
+    .eq("recipient_id", opts.recipientId)
+    .eq("type", "settlement_request")
+    .gte("created_at", fiveMinutesAgo)
+    .limit(1);
+
+  if (recentNotifs && recentNotifs.length > 0) {
+    throw new Error("Please wait 5 minutes before sending another reminder.");
+  }
+
   const sender = await getProfile(opts.senderId);
   const row = {
     recipient_id: opts.recipientId,
