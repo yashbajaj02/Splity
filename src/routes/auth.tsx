@@ -33,9 +33,11 @@ function AuthPage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
-  const isPasswordResetReturn =
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).has("passwordUpdated");
+  const [isPasswordResetReturn] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("passwordUpdated"),
+  );
 
   useEffect(() => {
     if (authLoading || !session) return;

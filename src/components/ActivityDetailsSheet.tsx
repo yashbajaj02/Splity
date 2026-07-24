@@ -6,15 +6,15 @@ import {
   DrawerContent,
   DrawerHeader,
   DrawerTitle,
-  DrawerFooter,
 } from "@/components/ui/drawer";
 import {
   getMyGroups,
   getGroupExpenses,
   getSplitsForExpenses,
+  getProfilesByIds,
 } from "@/lib/api";
-import type { AppNotification, Expense, ExpenseSplit } from "@/lib/app-types";
-import { CountUpCurrency } from "@/components/CountUpCurrency";
+import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
+
 
 interface ActivityDetailsSheetProps {
   open: boolean;
@@ -60,11 +60,19 @@ export function ActivityDetailsSheet({
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);
       }
-      return { allExpenses, splitsByExpense };
+      
+      const payerIds = Array.from(new Set(allExpenses.map(e => e.paid_by)));
+      const profiles = await getProfilesByIds(payerIds);
+      const profilesById: Record<string, Profile> = {};
+      for (const p of profiles) {
+        profilesById[p.id] = p;
+      }
+      
+      return { allExpenses, splitsByExpense, profilesById };
     },
   });
 
-  const { allExpenses = [], splitsByExpense = {} } = data ?? {};
+  const { allExpenses = [], splitsByExpense = {}, profilesById = {} } = data ?? {};
 
   // Filter relevant expenses for current user
   const relevantExpenses = allExpenses.filter((expense) => {
@@ -137,25 +145,20 @@ export function ActivityDetailsSheet({
       userShare = Number(exp.amount) / Math.max(1, splits.length);
     }
 
-    const membersCount = new Set([
-      exp.paid_by,
-      ...splits.map((s) => s.user_id),
-    ]).size;
+    const payerProfile = profilesById[exp.paid_by];
+    const payerName = payerProfile?.full_name || payerProfile?.username || "Someone";
 
     return {
       id: exp.id,
       title: exp.description,
       userShare: Math.max(0, userShare),
       totalAmount: Number(exp.amount),
-      membersCount,
       createdAt: exp.created_at,
+      payerName,
     };
   });
 
-  const totalAmount =
-    notification.amount != null
-      ? Number(notification.amount)
-      : items.reduce((sum, item) => sum + item.userShare, 0);
+
 
   const isUpi = notification.message?.toLowerCase().includes("upi");
   const paymentMethod = isUpi ? "UPI" : "Cash";
@@ -182,7 +185,7 @@ export function ActivityDetailsSheet({
               </DrawerTitle>
               {groupName && (
                 <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  {groupName}
+                  Group • {groupName}
                 </p>
               )}
             </div>
@@ -204,56 +207,52 @@ export function ActivityDetailsSheet({
               No detailed breakdown available.
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-8 pb-4">
               {items.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-3.5 rounded-xl border border-border/60 bg-card/60"
-                >
-                  <div className="min-w-0 flex-1 pr-3">
-                    <p className="font-semibold text-sm truncate text-foreground">
+                <div key={item.id} className="space-y-5">
+                  {/* EXPENSE INFORMATION */}
+                  <div>
+                    <p className="font-semibold text-lg text-foreground truncate">
                       {item.title}
                     </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {item.membersCount} Member{item.membersCount > 1 ? "s" : ""} •{" "}
-                      {format(new Date(item.createdAt), "d MMM yyyy")}
+                    <div className="mt-3">
+                      <p className="text-xs text-muted-foreground">Added by</p>
+                      <p className="text-sm font-medium text-foreground">{item.payerName}</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-3">
+                      {format(new Date(item.createdAt), "d MMM yyyy • h:mm a")}
                     </p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs text-muted-foreground">Your Share</p>
-                    <p className="text-sm font-bold font-display text-foreground mt-0.5">
-                      ₹{item.userShare.toFixed(2)}
-                    </p>
+
+                  {/* AMOUNT SECTION */}
+                  <div className="p-4 rounded-xl border border-border/60 bg-card/60 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <p className="text-sm font-medium text-foreground">Your Share</p>
+                      <p className="text-lg font-bold font-display text-foreground">
+                        ₹{item.userShare.toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="h-px w-full bg-border/50" />
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs text-muted-foreground">Total Amount</p>
+                      <p className="text-sm font-semibold text-foreground">
+                        ₹{item.totalAmount.toFixed(2)}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))}
+
+              {/* OPTIONAL PAYMENT METHOD */}
+              {isPayment && (
+                <div className="p-4 rounded-xl border border-border/60 bg-card/60 flex justify-between items-center mt-2">
+                  <p className="text-xs text-muted-foreground">Method</p>
+                  <p className="text-sm font-medium text-foreground">{paymentMethod}</p>
+                </div>
+              )}
             </div>
           )}
         </div>
-
-        <DrawerFooter className="border-t border-border/50 px-6 py-4 bg-card/40">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase text-muted-foreground">
-                {items.length} Expense{items.length !== 1 ? "s" : ""}{" "}
-                {isPayment ? "Cleared" : ""}
-              </p>
-              {isPayment && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Method: <span className="font-medium text-foreground">{paymentMethod}</span>
-                </p>
-              )}
-            </div>
-            <div className="text-right">
-              <p className="text-xs font-semibold uppercase text-muted-foreground">
-                {isPayment ? "Total Paid" : "Total Amount"}
-              </p>
-              <p className="text-xl font-bold font-display text-primary mt-0.5">
-                <CountUpCurrency amount={totalAmount} />
-              </p>
-            </div>
-          </div>
-        </DrawerFooter>
       </DrawerContent>
     </Drawer>
   );

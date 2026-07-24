@@ -84,5 +84,6 @@ export function useSettleBalances(userId: string) {
         }),
       };
     },
+    enabled: !!userId,
   });
 }

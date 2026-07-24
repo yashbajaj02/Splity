@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Bell, Check } from "lucide-react";
@@ -20,16 +20,16 @@ export const Route = createFileRoute("/app/settle")({
 
 function SettlePage() {
   const { session } = useAuth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id;
   const queryClient = useQueryClient();
 
-  const query = useSettleBalances(userId);
+  const query = useSettleBalances(userId ?? "");
 
   const remind = useMutation({
     mutationFn: (v: { debtorId: string; amount: number }) =>
       sendSettlementRequest({
         recipientId: v.debtorId,
-        senderId: userId,
+        senderId: userId!,
         amount: v.amount,
         message: "Please settle up on SplitPay",
       }),
@@ -40,7 +40,16 @@ function SettlePage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  if (query.isLoading) {
+  const totalOwe = useMemo(
+    () => query.data?.iOwe.reduce((s, b) => s + b.amount, 0) ?? 0,
+    [query.data?.iOwe],
+  );
+  const totalOwed = useMemo(
+    () => query.data?.owedToMe.reduce((s, b) => s + b.amount, 0) ?? 0,
+    [query.data?.owedToMe],
+  );
+
+  if (query.isPending || !userId) {
     return (
       <div className="flex justify-center py-16">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -61,8 +70,6 @@ function SettlePage() {
   }
 
   const data = query.data!;
-  const totalOwe = data.iOwe.reduce((s, b) => s + b.amount, 0);
-  const totalOwed = data.owedToMe.reduce((s, b) => s + b.amount, 0);
 
   return (
     <div className="space-y-6">

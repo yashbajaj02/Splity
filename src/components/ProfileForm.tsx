@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { updateProfile, findUserByUsername } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/app-types";
+import { getInitials } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -166,12 +167,4 @@ export function ProfileForm({
       )}
     </form>
   );
-}
-
-function getInitials(name: string, email: string) {
-  const source = name.trim() || email.trim();
-  if (!source) return "SP";
-  const parts = source.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
