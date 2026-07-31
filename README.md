@@ -18,14 +18,6 @@ A modern expense-sharing platform that makes splitting bills simple, transparent
 
 ---
 
-## 📸 Preview
-
-> Replace this image with your latest dashboard screenshot.
-
-![Splity Preview](./assets/preview.png)
-
----
-
 # ✨ Why Splity?
 
 Managing shared expenses shouldn't require spreadsheets or endless calculations.
