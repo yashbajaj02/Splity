@@ -49,7 +49,7 @@ export const Route = createFileRoute("/app/profile")({
 
 function ProfilePage() {
   const { session, signOut } = useAuth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id ?? "";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -59,6 +59,7 @@ function ProfilePage() {
   const profileQuery = useQuery({
     queryKey: ["profile", userId],
     queryFn: () => getProfile(userId),
+    enabled: !!userId,
   });
 
   if (profileQuery.isLoading) {
@@ -90,11 +91,12 @@ function ProfilePage() {
   }
 
   const profile = profileQuery.data;
-  const profileEmail = profile?.email ?? session!.user.email ?? "";
+  const userMeta = session?.user?.user_metadata;
+  const profileEmail = profile?.email ?? session?.user?.email ?? "";
   const displayName =
     profile?.full_name ??
-    (session!.user.user_metadata.full_name as string | undefined) ??
-    (session!.user.user_metadata.name as string | undefined) ??
+    (userMeta?.full_name as string | undefined) ??
+    (userMeta?.name as string | undefined) ??
     "Your profile";
   const username = profile?.username ? `@${profile.username}` : "Username not set";
   const initials = getInitials(displayName, profileEmail);

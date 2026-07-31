@@ -87,6 +87,7 @@ function AppLayout() {
   const needsOnboarding = !profile || !profile.username || !profile.upi_id;
 
   if (needsOnboarding) {
+    const userMeta = session.user.user_metadata;
     return (
       <Onboarding
         userId={userId!}
@@ -98,6 +99,7 @@ function AppLayout() {
   }
 
   const pendingCount = (notifQuery.data ?? []).filter((n) => n.status === "pending").length;
+  const userMeta = session.user.user_metadata;
 
   return (
     <div className="min-h-[100dvh] overflow-x-hidden pb-24 bg-background">
@@ -115,7 +117,7 @@ function AppLayout() {
               <AvatarImage src={profile.avatar_url ?? undefined} />
               <AvatarFallback className="text-[10px] bg-secondary text-primary">
                 {getInitials(
-                  profile.full_name ?? session.user.user_metadata.full_name ?? session.user.user_metadata.name ?? "",
+                  profile.full_name ?? userMeta?.full_name ?? userMeta?.name ?? "",
                   session.user.email ?? ""
                 )}
               </AvatarFallback>

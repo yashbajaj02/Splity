@@ -91,6 +91,9 @@ function SettlePage() {
                 payeeUpiId={b.profile?.upi_id ?? null}
                 amount={b.amount}
                 note="Splity settlement"
+                currentUserId={userId}
+                counterpartyId={b.counterpartyId}
+                groupId={b.settlementGroupId ?? undefined}
               />
               <PaidDialog
                 payeeName={b.profile?.full_name?.trim() || b.profile?.username?.trim() || "them"}

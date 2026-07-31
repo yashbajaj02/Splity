@@ -28,16 +28,18 @@ export const Route = createFileRoute("/app/")({
 
 function GroupsHome() {
   const { session } = useAuth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id ?? "";
   const [now, setNow] = useState(() => new Date());
 
   const groupsQuery = useQuery({
     queryKey: ["my-groups", userId],
     queryFn: () => getMyGroups(userId),
+    enabled: !!userId,
   });
   const profileQuery = useQuery({
     queryKey: ["profile", userId],
     queryFn: () => getProfile(userId),
+    enabled: !!userId,
   });
 
   useEffect(() => {
@@ -48,15 +50,16 @@ function GroupsHome() {
   const settleQuery = useSettleBalances(userId);
   const groups = groupsQuery.data ?? [];
   const profile = profileQuery.data;
+  const userMeta = session?.user?.user_metadata;
   const firstName = getFirstName(
     profile?.full_name ??
-      (session!.user.user_metadata.full_name as string | undefined) ??
-      (session!.user.user_metadata.name as string | undefined) ??
-      session!.user.email?.split("@")[0] ??
+      (userMeta?.full_name as string | undefined) ??
+      (userMeta?.name as string | undefined) ??
+      session?.user?.email?.split("@")[0] ??
       "there",
   );
   const greeting = getGreeting(now);
-  const initials = getInitials(profile?.full_name ?? firstName, session!.user.email ?? "");
+  const initials = getInitials(profile?.full_name ?? firstName, session?.user?.email ?? "");
   const totalOwe = (settleQuery.data?.iOwe ?? []).reduce(
     (s, b) => s + b.amount,
     0,

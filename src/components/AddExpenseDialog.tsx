@@ -6,7 +6,9 @@ import {
   addExpense,
   getGroupMembers,
   getProfilesByIds,
+  updateExpense,
 } from "@/lib/api";
+import type { Expense, ExpenseSplit } from "@/lib/app-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +32,9 @@ export function AddExpenseDialog({
   trigger,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
+  mode = "add",
+  initialExpense,
+  initialSplits,
 }: {
   userId: string;
   groupId?: string;
@@ -38,6 +43,9 @@ export function AddExpenseDialog({
   trigger?: React.ReactNode;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  mode?: "add" | "edit";
+  initialExpense?: Expense;
+  initialSplits?: ExpenseSplit[];
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -51,8 +59,8 @@ export function AddExpenseDialog({
   const [participants, setParticipants] = useState<string[]>([]);
   const queryClient = useQueryClient();
 
-  const activeGroupId = fixedGroupId ?? selectedGroupId;
-  const needsGroupPicker = !!groups && !fixedGroupId;
+  const activeGroupId = fixedGroupId ?? initialExpense?.group_id ?? selectedGroupId;
+  const needsGroupPicker = !!groups && !fixedGroupId && mode !== "edit";
 
   const membersQuery = useQuery({
     queryKey: ["group-members", activeGroupId],
@@ -67,8 +75,16 @@ export function AddExpenseDialog({
       .map((m) => m.user_id);
   }, [fixedMembers, membersQuery.data]);
 
+  console.log("IS FROZEN memberIds:", Object.isFrozen(memberIds));
+  let sortedMemberIds = memberIds;
+  try {
+    sortedMemberIds.sort();
+  } catch (e) {
+    console.error("CRASH STACK memberIds:", e instanceof Error ? e.stack : e);
+  }
+
   const profilesQuery = useQuery({
-    queryKey: ["profiles", memberIds.sort().join(",")],
+    queryKey: ["profiles", sortedMemberIds.join(",")],
     queryFn: () => getProfilesByIds(memberIds),
     enabled: open && memberIds.length > 0 && !fixedMembers,
   });
@@ -97,16 +113,24 @@ export function AddExpenseDialog({
 
   useEffect(() => {
     if (!open) return;
-    if (members.length > 0) {
+    if (mode === "edit" && initialExpense) {
+      setDescription(initialExpense.description);
+      setAmount(initialExpense.amount.toString());
+      if (initialSplits && initialSplits.length > 0) {
+        setParticipants(initialSplits.map((s) => s.user_id));
+      } else if (members.length > 0) {
+        setParticipants(members.map((m) => m.id));
+      }
+    } else if (members.length > 0) {
       setParticipants(members.map((m) => m.id));
     }
-  }, [open, members]);
+  }, [open, members, mode, initialExpense, initialSplits]);
 
   useEffect(() => {
-    if (open && groups?.[0] && !fixedGroupId) {
+    if (open && groups?.[0] && !fixedGroupId && mode !== "edit") {
       setSelectedGroupId(groups[0].id);
     }
-  }, [open, groups, fixedGroupId]);
+  }, [open, groups, fixedGroupId, mode]);
 
   const resetForm = () => {
     setDescription("");
@@ -147,16 +171,26 @@ export function AddExpenseDialog({
         return { userId: uid, amount: c / 100 };
       });
 
-      await addExpense({
-        groupId: activeGroupId,
-        createdBy: userId,
-        description: description.trim(),
-        amount: total,
-        splits,
-      });
+      if (mode === "edit" && initialExpense) {
+        await updateExpense({
+          expenseId: initialExpense.id,
+          userId,
+          description: description.trim(),
+          amount: total,
+          splits,
+        });
+      } else {
+        await addExpense({
+          groupId: activeGroupId,
+          createdBy: userId,
+          description: description.trim(),
+          amount: total,
+          splits,
+        });
+      }
     },
     onSuccess: () => {
-      toast.success("Expense added!");
+      toast.success(mode === "edit" ? "Expense updated!" : "Expense added!");
       queryClient.invalidateQueries({
         queryKey: ["group-expenses", activeGroupId],
       });
@@ -184,7 +218,7 @@ export function AddExpenseDialog({
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add an expense</DialogTitle>
+          <DialogTitle>{mode === "edit" ? "Edit expense" : "Add an expense"}</DialogTitle>
         </DialogHeader>
         <form
           className="space-y-4"
@@ -290,7 +324,7 @@ export function AddExpenseDialog({
               {mutation.isPending && (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
-              Add expense
+              {mode === "edit" ? "Save Changes" : "Add expense"}
             </Button>
           </DialogFooter>
         </form>

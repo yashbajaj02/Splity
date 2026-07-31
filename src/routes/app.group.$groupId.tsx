@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarDays, Clock, HandCoins, Loader2, LogOut, Receipt, Search, Trash2, UserPlus, Users, ChevronDown, ChevronRight, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, Clock, HandCoins, Loader2, LogOut, Pencil, Receipt, Search, Trash2, UserPlus, Users, ChevronDown, ChevronRight, X } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -13,7 +13,7 @@ import {
   getGroupExpenses,
   getGroupMembers,
   getProfilesByIds,
-  getSplitsForExpenses,
+  getSplitsForGroup,
   inviteToGroup,
   leaveGroup,
 } from "@/lib/api";
@@ -56,7 +56,7 @@ export const Route = createFileRoute("/app/group/$groupId")({
 function GroupDetail() {
   const { groupId } = Route.useParams();
   const { session } = useAuth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id ?? "";
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
@@ -143,9 +143,8 @@ function GroupDetail() {
 
   const expenseIds = (expensesQuery.data ?? []).map((expense) => expense.id);
   const splitsQuery = useQuery({
-    queryKey: ["group-splits", groupId, expenseIds.join(",")],
-    queryFn: () => getSplitsForExpenses(expenseIds),
-    enabled: expenseIds.length > 0,
+    queryKey: ["group-splits", groupId],
+    queryFn: () => getSplitsForGroup(groupId),
   });
 
   useEffect(() => {
@@ -619,6 +618,11 @@ function GroupDetail() {
                 canRemove={canDeleteExpense(expense, userId)}
                 removeBusy={removeExpenseMutation.isPending}
                 onRemove={() => removeExpenseMutation.mutate(expense.id)}
+                initialSplits={splitsByExpense[expense.id]}
+                acceptedMembers={acceptedMembers.map((member) => ({
+                  id: member.user_id,
+                  name: nameOf(member.user_id),
+                }))}
               />
             ))}
             {hasMoreExpenses ? (
@@ -871,6 +875,13 @@ const DebtRow = memo(function DebtRow({
         ? "text-primary"
         : "text-muted-foreground";
 
+  const [selectedExpenses, setSelectedExpenses] = useState<Record<string, number> | undefined>(undefined);
+  
+  // Calculate adjusted amount if partial selection
+  const adjustedAmount = selectedExpenses 
+    ? Object.values(selectedExpenses).reduce((acc, val) => acc + val, 0)
+    : debt.amount;
+
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
       <div className="min-w-0 flex-1 text-sm">
@@ -884,15 +895,23 @@ const DebtRow = memo(function DebtRow({
           <QrPayDialog
             payeeName={nameOf(debt.to)}
             payeeUpiId={payeeUpiId}
-            amount={debt.amount}
+            amount={adjustedAmount}
+            baseAmount={debt.amount}
             note={`Splity settlement`}
+            currentUserId={userId}
+            counterpartyId={debt.to}
+            groupId={groupId}
+            onSelectionChange={setSelectedExpenses}
           />
           <PaidDialog
             payeeName={nameOf(debt.to)}
-            amount={debt.amount}
+            amount={adjustedAmount}
+            baseAmount={debt.amount}
             groupId={groupId}
             payeeId={debt.to}
             payerId={userId}
+            selectedExpenses={selectedExpenses}
+            onSelectionChange={setSelectedExpenses}
           />
         </div>
       ) : null}
@@ -937,6 +956,8 @@ const ExpenseRow = memo(function ExpenseRow({
   canRemove,
   removeBusy,
   onRemove,
+  initialSplits,
+  acceptedMembers,
 }: {
   expense: Expense;
   currentUserId: string;
@@ -944,8 +965,10 @@ const ExpenseRow = memo(function ExpenseRow({
   canRemove: boolean;
   removeBusy: boolean;
   onRemove: () => void;
+  initialSplits?: ExpenseSplit[];
+  acceptedMembers?: { id: string; name: string }[];
 }) {
-  const canShowRemove = expense.created_by === currentUserId && canRemove;
+  const canShowActions = expense.created_by === currentUserId && canRemove;
   const descLower = expense.description.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
 
@@ -983,7 +1006,7 @@ const ExpenseRow = memo(function ExpenseRow({
         <p className="text-xs text-muted-foreground">{secondLine}</p>
         <p className="text-xs text-muted-foreground">{thirdLine}</p>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col items-end shrink-0">
         <div className="text-right">
           <p className="font-display font-bold">
             <CountUpCurrency amount={Number(expense.amount)} />
@@ -992,28 +1015,58 @@ const ExpenseRow = memo(function ExpenseRow({
             <p className="text-xs text-muted-foreground">{paymentMethod}</p>
           ) : null}
         </div>
-        {canShowRemove ? (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button size="icon" variant="ghost" disabled={removeBusy} aria-label="Remove expense">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Remove this expense?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  You can remove an expense only within 5 hours of adding it.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={onRemove} disabled={removeBusy}>
-                  Remove
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+        {canShowActions ? (
+          <div className="mt-1 flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2.5">
+            <Suspense fallback={null}>
+              <AddExpenseDialog
+                userId={currentUserId}
+                groupId={expense.group_id}
+                mode="edit"
+                initialExpense={expense}
+                initialSplits={initialSplits}
+                members={acceptedMembers}
+                trigger={
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6 rounded-md text-emerald-600 hover:bg-emerald-50 hover:text-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                    title="Edit"
+                    aria-label="Edit expense"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                }
+              />
+            </Suspense>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={removeBusy}
+                  className="h-6 w-6 rounded-md text-red-600 hover:bg-red-50 hover:text-red-500 dark:text-red-400 dark:hover:bg-red-950/40"
+                  title="Delete"
+                  aria-label="Delete expense"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove this expense?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You can remove an expense only within 5 hours of adding it.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={onRemove} disabled={removeBusy}>
+                    Remove
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         ) : null}
       </div>
     </div>

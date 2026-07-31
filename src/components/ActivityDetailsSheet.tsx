@@ -10,7 +10,7 @@ import {
 import {
   getMyGroups,
   getGroupExpenses,
-  getSplitsForExpenses,
+  getSplitsForGroup,
   getProfilesByIds,
 } from "@/lib/api";
 import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
@@ -55,7 +55,10 @@ export function ActivityDetailsSheet({
         groups.map((g) => getGroupExpenses(g.id)),
       );
       const allExpenses: Expense[] = expenseArrays.flat();
-      const splits = await getSplitsForExpenses(allExpenses.map((e) => e.id));
+      
+      const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
+      const splits = splitsArrays.flat();
+      
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);

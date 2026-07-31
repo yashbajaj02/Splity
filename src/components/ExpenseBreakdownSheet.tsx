@@ -11,7 +11,7 @@ import {
 import {
   getMyGroups,
   getGroupExpenses,
-  getSplitsForExpenses,
+  getSplitsForGroup,
   getProfilesByIds,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
@@ -116,7 +116,10 @@ export function ExpenseBreakdownSheet({
         groups.map((g) => getGroupExpenses(g.id)),
       );
       const allExpenses: Expense[] = expenseArrays.flat();
-      const splits = await getSplitsForExpenses(allExpenses.map((e) => e.id));
+      
+      const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
+      const splits = splitsArrays.flat();
+      
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);
@@ -244,10 +247,15 @@ export function ExpenseBreakdownSheet({
                   addedBy = p?.full_name?.trim() || p?.username?.trim() || "Someone";
                 }
 
+                const isPaidByMe = exp.paid_by === currentUserId;
+                const cardStyle = isPaidByMe
+                  ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
+                  : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
+
                 return (
                   <div
                     key={exp.id}
-                    className="flex items-center justify-between p-3.5 rounded-xl border border-border/60 bg-card/60 hover:bg-secondary/40 transition-colors"
+                    className={`flex items-center justify-between p-3.5 rounded-xl border transition-colors ${cardStyle}`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-lg">

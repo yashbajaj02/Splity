@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useMemo } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { toast } from "sonner";
 import { Camera, Download, X } from "lucide-react";
@@ -9,6 +9,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns";
+import { getMyGroups, getGroupExpenses, getSplitsForGroup } from "@/lib/api";
+import { computeExpenseBreakdown } from "@/lib/breakdown";
+import type { Expense, ExpenseSplit } from "@/lib/app-types";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -32,23 +40,119 @@ export function QrPayDialog({
   payeeName,
   payeeUpiId,
   amount,
+  baseAmount,
   note,
+  currentUserId,
+  counterpartyId,
+  groupId,
+  onSelectionChange,
 }: {
   payeeName: string;
   payeeUpiId: string | null;
   amount: number;
+  baseAmount?: number;
   note?: string;
+  currentUserId?: string;
+  counterpartyId?: string;
+  groupId?: string;
+  onSelectionChange?: (selected: Record<string, number> | undefined) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [savedDialogOpen, setSavedDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+  
+  // Track selected expense IDs to their FULL remaining amount
+  // null means "Select All" is implicitly active
+  const [selectedState, setSelectedState] = useState<Record<string, number> | null>(null);
+
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
+  const { data: breakdownData } = useQuery({
+    queryKey: ["qr-expense-breakdown", currentUserId, counterpartyId],
+    enabled: open && !!currentUserId && !!counterpartyId,
+    queryFn: async () => {
+      const groups = await getMyGroups(currentUserId!);
+      const expenseArrays = await Promise.all(
+        groups.map((g) => getGroupExpenses(g.id)),
+      );
+      const allExpenses: Expense[] = expenseArrays.flat();
+      
+      const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
+      const splits = splitsArrays.flat();
+      
+      const splitsByExpense: Record<string, ExpenseSplit[]> = {};
+      for (const s of splits) {
+        (splitsByExpense[s.expense_id] ??= []).push(s);
+      }
+      return computeExpenseBreakdown(currentUserId!, counterpartyId!, allExpenses, splitsByExpense);
+    },
+  });
+
+  const unsettledExpenses = (breakdownData ?? []).filter(e => e.remainingAmount > 0);
+  
+  // If no selection explicitly made, all are selected
+  const isAllSelected = selectedState === null;
+  const currentSelections = selectedState ?? unsettledExpenses.reduce((acc, curr) => {
+    acc[curr.expense.id] = curr.remainingAmount;
+    return acc;
+  }, {} as Record<string, number>);
+
+  function toggleExpense(expenseId: string, remainingAmount: number) {
+    let next: Record<string, number>;
+    if (selectedState === null) {
+      // Create explicit state from all unsettled, then toggle one off
+      next = unsettledExpenses.reduce((acc, curr) => {
+        acc[curr.expense.id] = curr.remainingAmount;
+        return acc;
+      }, {} as Record<string, number>);
+      delete next[expenseId];
+    } else {
+      next = { ...selectedState };
+      if (next[expenseId]) {
+        delete next[expenseId];
+      } else {
+        next[expenseId] = remainingAmount;
+      }
+    }
+    
+    // Check if everything is selected again
+    if (Object.keys(next).length === unsettledExpenses.length) {
+      setSelectedState(null);
+      onSelectionChange?.(undefined);
+    } else {
+      setSelectedState(next);
+      onSelectionChange?.(next);
+    }
+  }
+
+  function toggleAll() {
+    if (isAllSelected) {
+      setSelectedState({});
+      onSelectionChange?.({});
+    } else {
+      setSelectedState(null);
+      onSelectionChange?.(undefined);
+    }
+  }
+
+  const selectedTotal = useMemo(() => {
+    if (selectedState === null) {
+      if (unsettledExpenses.length > 0) {
+        return unsettledExpenses.reduce((sum, e) => sum + e.remainingAmount, 0);
+      }
+      return amount;
+    }
+    return Object.values(selectedState).reduce((sum, amt) => sum + amt, 0);
+  }, [selectedState, unsettledExpenses, amount]);
+
+  const currentAmount = selectedTotal;
+
   const qrValue = payeeUpiId
-    ? buildUpiQrValue(payeeUpiId, amount, note)
+    ? buildUpiQrValue(payeeUpiId, currentAmount, note)
     : `splity:no-upi:${payeeName}`;
 
-  const filename = `Splity_QR_${sanitizeFilename(payeeName.replace(/^@/, ""))}_${amount.toFixed(2)}.png`;
+  const filename = `Splity_QR_${sanitizeFilename(payeeName.replace(/^@/, ""))}_${currentAmount.toFixed(2)}.png`;
 
   async function handleSaveQr() {
     // Find the canvas element rendered by QRCodeCanvas
@@ -117,11 +221,116 @@ export function QrPayDialog({
               Pay {payeeName}
             </DialogTitle>
             <p className="text-2xl font-display font-bold text-foreground mt-1">
-              ₹{amount.toFixed(2)}
+              ₹{currentAmount.toFixed(2)}
             </p>
           </DialogHeader>
 
           <div className="px-6 py-6 space-y-5">
+            {/* View Expense Breakdown (Collapsible) */}
+            <Collapsible
+                open={breakdownOpen}
+                onOpenChange={setBreakdownOpen}
+                className="w-full space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-foreground">
+                    View Expense Breakdown
+                  </h4>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                      {breakdownOpen ? (
+                        <ChevronUp className="h-4 w-4" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent className="space-y-3">
+                  <div className="flex items-center space-x-2 px-1">
+                    <Checkbox
+                      id="select-all"
+                      checked={isAllSelected}
+                      onCheckedChange={toggleAll}
+                    />
+                    <label
+                      htmlFor="select-all"
+                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                    >
+                      Select All
+                    </label>
+                  </div>
+                  <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 rounded-md border border-border/40 p-2">
+                    {unsettledExpenses.length === 0 ? (
+                      <p className="text-xs text-center text-muted-foreground py-4">
+                        No pending expenses found.
+                      </p>
+                    ) : (
+                      unsettledExpenses.map((e) => {
+                        const isSelected = isAllSelected || !!selectedState?.[e.expense.id];
+                        const isPaidByMe = e.expense.paid_by === currentUserId;
+                        const cardStyle = isPaidByMe
+                          ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
+                          : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
+                        return (
+                        <div
+                          key={e.expense.id}
+                          className={`flex items-start space-x-3 p-2 border rounded-lg transition-colors cursor-pointer ${cardStyle}`}
+                          onClick={(evt) => {
+                            // Don't toggle twice if they click the actual checkbox
+                            if ((evt.target as HTMLElement).closest('button')) return;
+                            toggleExpense(e.expense.id, e.remainingAmount);
+                          }}
+                        >
+                          <Checkbox
+                            id={`exp-${e.expense.id}`}
+                            checked={isSelected}
+                            onCheckedChange={() => toggleExpense(e.expense.id, e.remainingAmount)}
+                            className="mt-1"
+                          />
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex justify-between items-start">
+                              <p className="text-sm font-medium leading-none truncate">
+                                {e.expense.description}
+                              </p>
+                              <p className="text-xs text-muted-foreground whitespace-nowrap ml-2">
+                                {format(new Date(e.expense.created_at), "d MMM")}
+                              </p>
+                            </div>
+                            <div className="flex justify-between items-center mt-1">
+                              <p className="text-xs text-muted-foreground">
+                                Your Share: ₹{e.yourShare.toFixed(2)}
+                              </p>
+                              <p className={`text-xs font-medium ${isPaidByMe ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+                                Pending: ₹{e.remainingAmount.toFixed(2)}
+                              </p>
+                            </div>
+                            
+                            {/* Payment History Entries */}
+                            {e.payments && e.payments.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {e.payments.map((p, i) => (
+                                  <div key={i} className="flex justify-between items-center px-2 py-1 rounded bg-secondary/60 border border-border/60">
+                                    <p className="text-[10px] text-foreground/80 font-medium">
+                                      Paid ₹{p.amount.toFixed(2)}
+                                    </p>
+                                    <p className="text-[9px] text-muted-foreground">
+                                      {p.date ? format(new Date(p.date), "d MMM • h:mm a") : ""}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                          </div>
+                        </div>
+                      );
+                    })
+                    )}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+
             {/* QR Code */}
             <div className="flex flex-col items-center gap-3">
               {payeeUpiId ? (

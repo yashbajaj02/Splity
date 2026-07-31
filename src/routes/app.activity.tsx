@@ -77,18 +77,20 @@ function formatActivityTime(isoString: string): string {
 
 function ActivityPage() {
   const { session } = useAuth();
-  const userId = session!.user.id;
+  const userId = session?.user?.id ?? "";
   const queryClient = useQueryClient();
 
   const notifQuery = useQuery({
     queryKey: ["notifications", userId],
     queryFn: () => getNotifications(userId),
+    enabled: !!userId,
     staleTime: 15_000,
   });
 
   const groupsQuery = useQuery({
     queryKey: ["my-groups", userId],
     queryFn: () => getMyGroups(userId),
+    enabled: !!userId,
     staleTime: 60_000,
   });
 
@@ -107,8 +109,16 @@ function ActivityPage() {
     ) as string[];
   }, [notifQuery.data]);
 
+  console.log("IS FROZEN profileIds:", Object.isFrozen(profileIds));
+  let sortedProfileIds = profileIds;
+  try {
+    sortedProfileIds.sort();
+  } catch (e) {
+    console.error("CRASH STACK profileIds:", e instanceof Error ? e.stack : e);
+  }
+
   const profilesQuery = useQuery({
-    queryKey: ["notification-senders", profileIds.sort().join(",")],
+    queryKey: ["notification-senders", sortedProfileIds.join(",")],
     queryFn: () => getNotificationSenderProfiles(profileIds),
     enabled: profileIds.length > 0,
     staleTime: 60_000,

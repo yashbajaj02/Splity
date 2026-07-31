@@ -61,21 +61,17 @@ export async function findUserByUsername(username: string) {
 /* -------------------------------- GROUPS -------------------------------- */
 
 export async function getMyGroups(userId: string): Promise<Group[]> {
-  const { data: memberships, error: mErr } = await supabase
-    .from("group_members")
-    .select("group_id")
-    .eq("user_id", userId)
-    .eq("status", "accepted");
-  if (mErr) throw mErr;
-  const ids = (memberships ?? []).map((m) => m.group_id as string);
-  if (ids.length === 0) return [];
   const { data, error } = await supabase
     .from("groups")
-    .select("*")
-    .in("id", ids)
+    .select("*, group_members!inner(user_id, status)")
+    .eq("group_members.user_id", userId)
+    .eq("group_members.status", "accepted")
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []) as Group[];
+  return (data ?? []).map((g: any) => {
+    const { group_members, ...rest } = g;
+    return rest;
+  }) as Group[];
 }
 
 export async function createGroup(
@@ -246,14 +242,16 @@ export async function getExpense(expenseId: string): Promise<Expense | null> {
   return data as Expense | null;
 }
 
-export async function getSplitsForExpenses(expenseIds: string[]): Promise<ExpenseSplit[]> {
-  if (expenseIds.length === 0) return [];
+export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]> {
   const { data, error } = await supabase
     .from("expense_splits")
-    .select("*")
-    .in("expense_id", expenseIds);
+    .select("*, expenses!inner(group_id)")
+    .eq("expenses.group_id", groupId);
   if (error) throw error;
-  return (data ?? []) as ExpenseSplit[];
+  return (data ?? []).map((d: any) => {
+    const { expenses, ...split } = d;
+    return split;
+  }) as ExpenseSplit[];
 }
 
 export async function addExpense(opts: {
@@ -263,18 +261,13 @@ export async function addExpense(opts: {
   amount: number;
   splits: { userId: string; amount: number }[];
 }) {
-  const [group, creator, members] = await Promise.all([
-    getGroup(opts.groupId),
-    getProfile(opts.createdBy),
-    getGroupMembers(opts.groupId),
-  ]);
-
+  // 1. Insert expense immediately
   const { data, error } = await supabase
     .from("expenses")
     .insert({
       group_id: opts.groupId,
       created_by: opts.createdBy,
-      paid_by: opts.createdBy,  // always the authenticated user
+      paid_by: opts.createdBy, // always the authenticated user
       description: opts.description,
       amount: opts.amount,
     })
@@ -283,6 +276,7 @@ export async function addExpense(opts: {
   if (error) throw error;
   const expense = data as Expense;
 
+  // 2. Insert splits immediately
   const rows = opts.splits.map((s) => ({
     expense_id: expense.id,
     user_id: s.userId,
@@ -291,56 +285,65 @@ export async function addExpense(opts: {
   const { error: sErr } = await supabase.from("expense_splits").insert(rows);
   if (sErr) throw sErr;
 
-  const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
-  const recipients = members
-    .filter(
-      (member) =>
-        member.status === "accepted" &&
-        member.user_id !== opts.createdBy &&
-        involvedUserIds.has(member.user_id)
-    )
-    .map((member) => member.user_id);
+  // 3. Send notifications asynchronously without failing the expense operation
+  if (!opts.description.toLowerCase().includes("settlement")) {
+    Promise.all([
+      getGroup(opts.groupId),
+      getProfile(opts.createdBy),
+      getGroupMembers(opts.groupId),
+    ])
+      .then(async ([group, creator, members]) => {
+        const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
+        const recipients = members
+          .filter(
+            (member) =>
+              member.status === "accepted" &&
+              member.user_id !== opts.createdBy &&
+              involvedUserIds.has(member.user_id),
+          )
+          .map((member) => member.user_id);
 
-  if (recipients.length > 0) {
-    const paidByName = creator?.username
-      ? `@${creator.username}`
-      : "the sender";
+        if (recipients.length > 0) {
+          const paidByName = creator?.username ? `@${creator.username}` : "the sender";
+          const notificationRows = recipients.map((recipientId) => ({
+            recipient_id: recipientId,
+            sender_id: opts.createdBy,
+            type: "expense_added" as const,
+            status: "pending" as const,
+            group_id: opts.groupId,
+            amount: opts.amount,
+            message: buildExpenseAddedMessage({
+              description: opts.description,
+              groupName: group?.name ?? "your group",
+              paidByName,
+            }),
+            sender_username: creator?.username ?? null,
+            sender_upi: creator?.upi_id ?? null,
+          }));
 
-    const notificationRows = recipients.map((recipientId) => ({
-      recipient_id: recipientId,
-      sender_id: opts.createdBy,
-      type: "expense_added" as const,
-      status: "pending" as const,
-      group_id: opts.groupId,
-      amount: opts.amount,
-      message: buildExpenseAddedMessage({
-        description: opts.description,
-        groupName: group?.name ?? "your group",
-        paidByName,
-      }),
-      sender_username: creator?.username ?? null,
-      sender_upi: creator?.upi_id ?? null,
-    }));
+          let { error: notificationError } = await supabase
+            .from("notifications")
+            .insert(notificationRows);
 
-    let { error: notificationError } = await supabase
-      .from("notifications")
-      .insert(notificationRows);
-
-    if (notificationError && /sender_username|column/i.test(notificationError.message)) {
-      const fallbackRows = notificationRows.map(
-        ({ recipient_id, sender_id, type, status, group_id, amount, message }) => ({
-          recipient_id,
-          sender_id,
-          type,
-          status,
-          group_id,
-          amount,
-          message,
-        }),
-      );
-      ({ error: notificationError } = await supabase.from("notifications").insert(fallbackRows));
-    }
-    if (notificationError) throw notificationError;
+          if (notificationError && /sender_username|column/i.test(notificationError.message)) {
+            const fallbackRows = notificationRows.map(
+              ({ recipient_id, sender_id, type, status, group_id, amount, message }) => ({
+                recipient_id,
+                sender_id,
+                type,
+                status,
+                group_id,
+                amount,
+                message,
+              }),
+            );
+            await supabase.from("notifications").insert(fallbackRows);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error("Non-fatal notification dispatch error:", err);
+      });
   }
 
   return expense;
@@ -367,15 +370,76 @@ export function canDeleteExpense(expense: Expense, userId: string, now = Date.no
   return now - new Date(expense.created_at).getTime() <= EXPENSE_DELETE_WINDOW_MS;
 }
 
-const settlementLocks = new Set<string>();
+export function canEditExpense(expense: Expense, userId: string, now = Date.now()) {
+  return canDeleteExpense(expense, userId, now);
+}
 
-async function getRemainingDebt(payerId: string, payeeId: string): Promise<number> {
-  const groups = await getMyGroups(payerId);
+export async function updateExpense(opts: {
+  expenseId: string;
+  userId: string;
+  description: string;
+  amount: number;
+  splits: { userId: string; amount: number }[];
+}) {
+  const expense = await getExpense(opts.expenseId);
+  if (!expense) throw new Error("Expense not found.");
+  if (expense.created_by !== opts.userId) {
+    throw new Error("Only the person who added this expense can edit it.");
+  }
+
+  const ageMs = Date.now() - new Date(expense.created_at).getTime();
+  if (ageMs > EXPENSE_DELETE_WINDOW_MS) {
+    throw new Error("This expense can only be edited within 5 hours.");
+  }
+
+  const { data, error } = await supabase
+    .from("expenses")
+    .update({
+      description: opts.description,
+      amount: opts.amount,
+    })
+    .eq("id", opts.expenseId)
+    .select("*")
+    .single();
+  if (error) throw error;
+
+  const { error: delSplitsErr } = await supabase
+    .from("expense_splits")
+    .delete()
+    .eq("expense_id", opts.expenseId);
+  if (delSplitsErr) throw delSplitsErr;
+
+  const rows = opts.splits.map((s) => ({
+    expense_id: opts.expenseId,
+    user_id: s.userId,
+    amount_owed: s.amount,
+  }));
+  const { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  if (sErr) throw sErr;
+
+  return data as Expense;
+}
+
+const getSettlementLocks = () => {
+  if (typeof window === "undefined") {
+    return { has: () => false, add: () => {}, delete: () => {} } as unknown as Set<string>;
+  }
+  if (!(window as any).__settlementLocks) {
+    (window as any).__settlementLocks = new Set<string>();
+  }
+  return (window as any).__settlementLocks as Set<string>;
+};
+
+async function getRemainingDebt(payerId: string, payeeId: string, groupId?: string): Promise<number> {
+  const groups = groupId ? [{ id: groupId, name: "", description: null, created_by: "", created_at: "" }] : await getMyGroups(payerId);
   if (groups.length === 0) return 0;
   const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
   const allExpenses: Expense[] = expenseArrays.flat();
   if (allExpenses.length === 0) return 0;
-  const splits = await getSplitsForExpenses(allExpenses.map((e) => e.id));
+  
+  const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
+  const splits = splitsArrays.flat();
+  
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
   for (const s of splits) {
     (splitsByExpense[s.expense_id] ??= []).push(s);
@@ -390,15 +454,17 @@ export async function settleByCash(opts: {
   payerId: string;
   payeeId: string;
   amount: number;
+  settledExpenses?: Record<string, number>;
 }) {
   const lockKey = `${opts.payerId}->${opts.payeeId}`;
-  if (settlementLocks.has(lockKey)) {
+  const locks = getSettlementLocks();
+  if (locks.has(lockKey)) {
     throw new Error("Already Settled");
   }
-  settlementLocks.add(lockKey);
+  locks.add(lockKey);
 
   try {
-    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId);
+    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId, opts.groupId);
     if (remaining <= 0) {
       throw new Error("Already Settled");
     }
@@ -407,7 +473,7 @@ export async function settleByCash(opts: {
     const expense = await addExpense({
       groupId: opts.groupId,
       createdBy: opts.payerId,
-      description: "Cash settlement",
+      description: opts.settledExpenses ? `Cash settlement || ${JSON.stringify({ settled: opts.settledExpenses })}` : "Cash settlement",
       amount: opts.amount,
       splits: [{ userId: opts.payeeId, amount: opts.amount }],
     });
@@ -423,24 +489,27 @@ export async function settleByCash(opts: {
       sender_username: payer?.username ?? null,
       sender_upi: payer?.upi_id ?? null,
     };
-    let { error } = await supabase.from("notifications").insert(row);
-    if (error && /sender_username|column/i.test(error.message)) {
-      const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
-      ({ error } = await supabase.from("notifications").insert({
-        recipient_id,
-        sender_id,
-        type,
-        status,
-        group_id,
-        amount,
-        message,
-      }));
+    try {
+      let { error } = await supabase.from("notifications").insert(row);
+      if (error && /sender_username|column/i.test(error.message)) {
+        const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+        await supabase.from("notifications").insert({
+          recipient_id,
+          sender_id,
+          type,
+          status,
+          group_id,
+          amount,
+          message,
+        });
+      }
+    } catch (e) {
+      console.error("Non-fatal notification insertion error in settleByCash:", e);
     }
-    if (error) throw error;
 
     return expense;
   } finally {
-    settlementLocks.delete(lockKey);
+    locks.delete(lockKey);
   }
 }
 
@@ -449,15 +518,17 @@ export async function settleByUpi(opts: {
   payerId: string;
   payeeId: string;
   amount: number;
+  settledExpenses?: Record<string, number>;
 }) {
   const lockKey = `${opts.payerId}->${opts.payeeId}`;
-  if (settlementLocks.has(lockKey)) {
+  const locks = getSettlementLocks();
+  if (locks.has(lockKey)) {
     throw new Error("Already Settled");
   }
-  settlementLocks.add(lockKey);
+  locks.add(lockKey);
 
   try {
-    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId);
+    const remaining = await getRemainingDebt(opts.payerId, opts.payeeId, opts.groupId);
     if (remaining <= 0) {
       throw new Error("Already Settled");
     }
@@ -466,7 +537,7 @@ export async function settleByUpi(opts: {
     const expense = await addExpense({
       groupId: opts.groupId,
       createdBy: opts.payerId,
-      description: "UPI settlement",
+      description: opts.settledExpenses ? `UPI settlement || ${JSON.stringify({ settled: opts.settledExpenses })}` : "UPI settlement",
       amount: opts.amount,
       splits: [{ userId: opts.payeeId, amount: opts.amount }],
     });
@@ -482,24 +553,26 @@ export async function settleByUpi(opts: {
       sender_username: payer?.username ?? null,
       sender_upi: payer?.upi_id ?? null,
     };
-    let { error } = await supabase.from("notifications").insert(row);
-    if (error && /sender_username|column/i.test(error.message)) {
-      const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
-      ({ error } = await supabase.from("notifications").insert({
-        recipient_id,
-        sender_id,
-        type,
-        status,
-        group_id,
-        amount,
-        message,
-      }));
+    try {
+      let { error } = await supabase.from("notifications").insert(row);
+      if (error && /sender_username|column/i.test(error.message)) {
+        const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
+        await supabase.from("notifications").insert({
+          recipient_id,
+          sender_id,
+          type,
+          status,
+          group_id,
+          amount,
+          message,
+        });
+      }
+    } catch (e) {
+      console.error("Non-fatal notification insertion error in settleByUpi:", e);
     }
-    if (error) throw error;
 
-    return expense;
   } finally {
-    settlementLocks.delete(lockKey);
+    locks.delete(lockKey);
   }
 }
 

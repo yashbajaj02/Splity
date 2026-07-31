@@ -1,92 +1,88 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import { getMyGroups } from "@/lib/api";
 
 export function useSupabaseRealtime(userId: string | undefined) {
   const queryClient = useQueryClient();
 
+  const { data: groups } = useQuery({
+    queryKey: ["my-groups-realtime", userId],
+    queryFn: () => (userId ? getMyGroups(userId) : Promise.resolve([])),
+    enabled: !!userId,
+  });
+
   useEffect(() => {
     if (!userId) return;
 
-    // Create a single global channel for schema changes
-    const channel = supabase
-      .channel("schema-db-changes")
-      // 1. Listen for expense changes
+    const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    const globalChannel = supabase
+      .channel("schema-db-changes-global")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "expenses" },
-        (payload) => {
-          const newRow = payload.new as any;
-          const oldRow = payload.old as any;
-          const groupId = newRow?.group_id || oldRow?.group_id;
-          if (groupId) {
-            queryClient.invalidateQueries({
-              queryKey: ["group-expenses", groupId],
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["settle", userId],
-            });
-          }
+        { event: "*", schema: "public", table: "group_members", filter: `user_id=eq.${userId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
         }
       )
-      // 2. Listen for expense_splits changes
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${userId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications", filter: `sender_id=eq.${userId}` },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
+        }
+      )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "expense_splits" },
         () => {
-          // Splits affect group-splits globally (or per group but we don't have groupId on splits)
           queryClient.invalidateQueries({ queryKey: ["group-splits"] });
           queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-        }
-      )
-      // 3. Listen for groups changes
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "groups" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-        }
-      )
-      // 4. Listen for group_members changes
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "group_members" },
-        (payload) => {
-          queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-          const newRow = payload.new as any;
-          const oldRow = payload.old as any;
-          const groupId = newRow?.group_id || oldRow?.group_id;
-          if (groupId) {
-            queryClient.invalidateQueries({
-              queryKey: ["group-members", groupId],
-            });
-          }
-        }
-      )
-      // 5. Listen for notifications changes
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        (payload) => {
-          const newRow = payload.new as any;
-          const oldRow = payload.old as any;
-          if (
-            newRow?.recipient_id === userId ||
-            oldRow?.recipient_id === userId ||
-            newRow?.sender_id === userId ||
-            oldRow?.sender_id === userId
-          ) {
-            queryClient.invalidateQueries({
-              queryKey: ["notifications", userId],
-            });
-          }
+          queryClient.invalidateQueries({ queryKey: ["expense-breakdown"] });
+          queryClient.invalidateQueries({ queryKey: ["qr-expense-breakdown"] });
         }
       )
       .subscribe();
 
-    // Cleanup subscription when user logs out or component unmounts
+    channels.push(globalChannel);
+
+    if (groups) {
+      for (const group of groups) {
+        const groupChannel = supabase
+          .channel(`schema-db-changes-${group.id}`)
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "expenses", filter: `group_id=eq.${group.id}` },
+            () => {
+              queryClient.invalidateQueries({ queryKey: ["group-expenses", group.id] });
+              queryClient.invalidateQueries({ queryKey: ["group-splits", group.id] });
+              queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+              queryClient.invalidateQueries({ queryKey: ["expense-breakdown"] });
+              queryClient.invalidateQueries({ queryKey: ["qr-expense-breakdown"] });
+            }
+          )
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "group_members", filter: `group_id=eq.${group.id}` },
+            () => {
+              queryClient.invalidateQueries({ queryKey: ["group-members", group.id] });
+            }
+          )
+          .subscribe();
+        channels.push(groupChannel);
+      }
+    }
+
     return () => {
-      supabase.removeChannel(channel);
+      channels.forEach((c) => supabase.removeChannel(c));
     };
-  }, [userId, queryClient]);
+  }, [userId, queryClient, groups]);
 }
