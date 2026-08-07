@@ -136,17 +136,7 @@ export function QrPayDialog({
     }
   }
 
-  const selectedTotal = useMemo(() => {
-    if (selectedState === null) {
-      if (unsettledExpenses.length > 0) {
-        return unsettledExpenses.reduce((sum, e) => sum + e.remainingAmount, 0);
-      }
-      return amount;
-    }
-    return Object.values(selectedState).reduce((sum, amt) => sum + amt, 0);
-  }, [selectedState, unsettledExpenses, amount]);
-
-  const currentAmount = selectedTotal;
+  const currentAmount = amount;
 
   const qrValue = payeeUpiId
     ? buildUpiQrValue(payeeUpiId, currentAmount, note)

@@ -87,24 +87,14 @@ export function PaidDialog({
   const unsettledExpenses = (breakdownData ?? []).filter(e => e.remainingAmount > 0);
   const isAllSelected = selectedState === null;
 
-  const selectedTotal = useMemo(() => {
-    if (selectedState === null) {
-      if (unsettledExpenses.length > 0) {
-        return unsettledExpenses.reduce((sum, e) => sum + e.remainingAmount, 0);
-      }
-      return amount;
-    }
-    return Object.values(selectedState).reduce((sum, amt) => sum + amt, 0);
-  }, [selectedState, unsettledExpenses, amount]);
-
-  const displayAmount = manualAmount !== null ? manualAmount : selectedTotal.toFixed(2);
+  const displayAmount = manualAmount !== null ? manualAmount : amount.toFixed(2);
   const [paidAmount, setPaidAmount] = useState(displayAmount);
 
   useEffect(() => {
     if (manualAmount === null) {
-      setPaidAmount(selectedTotal.toFixed(2));
+      setPaidAmount(amount.toFixed(2));
     }
-  }, [selectedTotal, manualAmount]);
+  }, [amount, manualAmount]);
 
   function toggleExpense(expenseId: string, remainingAmount: number) {
     let next: Record<string, number> | null;

@@ -7,7 +7,7 @@ import { nitro } from "nitro/vite";
 
 export default defineConfig(({ command }) => ({
   server: {
-    host: "::",
+    host: "localhost",
     port: 8080,
   },
   resolve: {

@@ -878,10 +878,6 @@ const DebtRow = memo(function DebtRow({
 
   const [selectedExpenses, setSelectedExpenses] = useState<Record<string, number> | undefined>(undefined);
   
-  // Calculate adjusted amount if partial selection
-  const adjustedAmount = selectedExpenses 
-    ? Object.values(selectedExpenses).reduce((acc, val) => acc + val, 0)
-    : debt.amount;
 
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -896,7 +892,7 @@ const DebtRow = memo(function DebtRow({
           <QrPayDialog
             payeeName={nameOf(debt.to)}
             payeeUpiId={payeeUpiId}
-            amount={adjustedAmount}
+            amount={debt.amount}
             baseAmount={debt.amount}
             note={`Splity settlement`}
             currentUserId={userId}
@@ -906,7 +902,7 @@ const DebtRow = memo(function DebtRow({
           />
           <PaidDialog
             payeeName={nameOf(debt.to)}
-            amount={adjustedAmount}
+            amount={debt.amount}
             baseAmount={debt.amount}
             groupId={groupId}
             payeeId={debt.to}
