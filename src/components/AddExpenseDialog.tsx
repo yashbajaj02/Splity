@@ -57,6 +57,9 @@ export function AddExpenseDialog({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [participants, setParticipants] = useState<string[]>([]);
+  const [splitMode, setSplitMode] = useState<"equal" | "amount" | "percentage">("equal");
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [customPercentages, setCustomPercentages] = useState<Record<string, string>>({});
   const queryClient = useQueryClient();
 
   const activeGroupId = fixedGroupId ?? initialExpense?.group_id ?? selectedGroupId;
@@ -135,8 +138,53 @@ export function AddExpenseDialog({
   const resetForm = () => {
     setDescription("");
     setAmount("");
+    setSplitMode("equal");
+    setCustomAmounts({});
+    setCustomPercentages({});
     setParticipants(members.map((m) => m.id));
   };
+
+  const handleSetSplitMode = (nextMode: "equal" | "amount" | "percentage") => {
+    setSplitMode(nextMode);
+    const total = Number(amount) || 0;
+    if (nextMode === "amount" && participants.length > 0) {
+      const defaultShare = total > 0 ? (total / participants.length).toFixed(2) : "";
+      setCustomAmounts((prev) => {
+        const next = { ...prev };
+        participants.forEach((pid) => {
+          if (!next[pid]) next[pid] = defaultShare;
+        });
+        return next;
+      });
+    } else if (nextMode === "percentage" && participants.length > 0) {
+      const defaultPct = (100 / participants.length).toFixed(1);
+      setCustomPercentages((prev) => {
+        const next = { ...prev };
+        participants.forEach((pid) => {
+          if (!next[pid]) next[pid] = defaultPct;
+        });
+        return next;
+      });
+    }
+  };
+
+  const totalAmount = Number(amount) || 0;
+
+  const allocatedAmountSum = useMemo(() => {
+    return participants.reduce((sum, pid) => sum + (Number(customAmounts[pid]) || 0), 0);
+  }, [participants, customAmounts]);
+
+  const amountRemaining = useMemo(() => {
+    return Math.round((totalAmount - allocatedAmountSum) * 100) / 100;
+  }, [totalAmount, allocatedAmountSum]);
+
+  const allocatedPercentageSum = useMemo(() => {
+    return participants.reduce((sum, pid) => sum + (Number(customPercentages[pid]) || 0), 0);
+  }, [participants, customPercentages]);
+
+  const percentageRemaining = useMemo(() => {
+    return Math.round((100 - allocatedPercentageSum) * 10) / 10;
+  }, [allocatedPercentageSum]);
 
   const allSelected =
     members.length > 0 && participants.length === members.length;
@@ -159,17 +207,58 @@ export function AddExpenseDialog({
       if (participants.length === 0)
         throw new Error("Select at least one person to split with.");
 
-      const cents = Math.round(total * 100);
-      const base = Math.floor(cents / participants.length);
-      let remainder = cents - base * participants.length;
-      const splits = participants.map((uid) => {
-        let c = base;
-        if (remainder > 0) {
-          c += 1;
-          remainder -= 1;
+      let splits: { userId: string; amount: number }[] = [];
+
+      if (splitMode === "equal") {
+        const cents = Math.round(total * 100);
+        const base = Math.floor(cents / participants.length);
+        let remainder = cents - base * participants.length;
+        splits = participants.map((uid) => {
+          let c = base;
+          if (remainder > 0) {
+            c += 1;
+            remainder -= 1;
+          }
+          return { userId: uid, amount: c / 100 };
+        });
+      } else if (splitMode === "amount") {
+        let sum = 0;
+        splits = participants.map((uid) => {
+          const val = Number(customAmounts[uid]) || 0;
+          sum += val;
+          return { userId: uid, amount: Math.round(val * 100) / 100 };
+        });
+        if (Math.abs(sum - total) > 0.02) {
+          throw new Error(
+            `Allocated amounts (₹${sum.toFixed(2)}) must equal total amount (₹${total.toFixed(2)}).`
+          );
         }
-        return { userId: uid, amount: c / 100 };
-      });
+      } else if (splitMode === "percentage") {
+        let totalPct = 0;
+        participants.forEach((uid) => {
+          totalPct += Number(customPercentages[uid]) || 0;
+        });
+        if (Math.abs(totalPct - 100) > 0.05) {
+          throw new Error(
+            `Total percentage (${totalPct.toFixed(1)}%) must equal 100%.`
+          );
+        }
+
+        const totalCents = Math.round(total * 100);
+        let allocatedCents = 0;
+        splits = participants.map((uid, index) => {
+          const pct = Number(customPercentages[uid]) || 0;
+          let memberCents = Math.round((totalCents * pct) / 100);
+          if (index === participants.length - 1) {
+            const currentSum = allocatedCents + memberCents;
+            if (currentSum !== totalCents && Math.abs(currentSum - totalCents) <= 5) {
+              memberCents = totalCents - allocatedCents;
+            }
+          }
+          allocatedCents += memberCents;
+          return { userId: uid, amount: memberCents / 100 };
+        });
+      }
 
       if (mode === "edit" && initialExpense) {
         await updateExpense({
@@ -287,7 +376,13 @@ export function AddExpenseDialog({
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <Label>Split equally between</Label>
+                  <Label>
+                    {splitMode === "equal"
+                      ? "Split equally between"
+                      : splitMode === "amount"
+                        ? "Split by exact amount between"
+                        : "Split by percentage between"}
+                  </Label>
                   <button
                     type="button"
                     onClick={toggleAll}
@@ -296,21 +391,178 @@ export function AddExpenseDialog({
                     {allSelected ? "Deselect all" : "Select all"}
                   </button>
                 </div>
-                <div className="max-h-40 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
+                <div className="max-h-36 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
                   {members.map((m) => (
                     <label
                       key={m.id}
-                      className="flex cursor-pointer items-center gap-2 text-sm"
+                      className="flex cursor-pointer items-center gap-2 text-sm select-none"
                     >
                       <Checkbox
                         checked={participants.includes(m.id)}
                         onCheckedChange={() => toggle(m.id)}
                       />
-                      {m.name}
+                      <span className="truncate">{m.name}</span>
                     </label>
                   ))}
                 </div>
               </div>
+
+              {/* Segmented Control */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground font-medium">Split Method</Label>
+                <div className="grid grid-cols-3 gap-1 rounded-xl bg-secondary/60 p-1 border border-border/50 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => handleSetSplitMode("equal")}
+                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                      splitMode === "equal"
+                        ? "bg-background text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Equal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetSplitMode("amount")}
+                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                      splitMode === "amount"
+                        ? "bg-background text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Amount
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetSplitMode("percentage")}
+                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                      splitMode === "percentage"
+                        ? "bg-background text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Percentage
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount Mode Inputs */}
+              {splitMode === "amount" && (
+                <div className="space-y-2 pt-1 transition-all duration-200">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Member amounts</span>
+                    <span
+                      className={`font-semibold ${
+                        Math.abs(amountRemaining) < 0.01
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : amountRemaining > 0
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-destructive"
+                      }`}
+                    >
+                      {Math.abs(amountRemaining) < 0.01
+                        ? "✓ Total matched"
+                        : amountRemaining > 0
+                          ? `₹${amountRemaining.toFixed(2)} remaining`
+                          : `Over by ₹${Math.abs(amountRemaining).toFixed(2)}`}
+                    </span>
+                  </div>
+                  <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
+                    {participants.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        Select members above to allocate amounts.
+                      </p>
+                    ) : (
+                      participants.map((pid) => {
+                        const m = members.find((x) => x.id === pid);
+                        return (
+                          <div key={pid} className="flex items-center justify-between gap-3">
+                            <span className="text-sm font-medium truncate flex-1">{m?.name || "Member"}</span>
+                            <div className="relative w-28 shrink-0">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">₹</span>
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                value={customAmounts[pid] ?? ""}
+                                onChange={(e) =>
+                                  setCustomAmounts((prev) => ({ ...prev, [pid]: e.target.value }))
+                                }
+                                className="pl-6 h-8 text-xs font-semibold"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Percentage Mode Inputs */}
+              {splitMode === "percentage" && (
+                <div className="space-y-2 pt-1 transition-all duration-200">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground font-medium">Member percentages</span>
+                    <span
+                      className={`font-semibold ${
+                        Math.abs(percentageRemaining) < 0.01
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : percentageRemaining > 0
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-destructive"
+                      }`}
+                    >
+                      {Math.abs(percentageRemaining) < 0.01
+                        ? "✓ 100% matched"
+                        : percentageRemaining > 0
+                          ? `${percentageRemaining.toFixed(1)}% remaining`
+                          : `Over by ${Math.abs(percentageRemaining).toFixed(1)}%`}
+                    </span>
+                  </div>
+                  <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
+                    {participants.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        Select members above to allocate percentages.
+                      </p>
+                    ) : (
+                      participants.map((pid) => {
+                        const m = members.find((x) => x.id === pid);
+                        const pctVal = Number(customPercentages[pid] || 0);
+                        const calculatedAmt = totalAmount > 0 ? (totalAmount * pctVal) / 100 : 0;
+
+                        return (
+                          <div key={pid} className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium truncate">{m?.name || "Member"}</p>
+                              <p className="text-[11px] text-muted-foreground">₹{calculatedAmt.toFixed(2)}</p>
+                            </div>
+                            <div className="relative w-24 shrink-0">
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                placeholder="0"
+                                value={customPercentages[pid] ?? ""}
+                                onChange={(e) =>
+                                  setCustomPercentages((prev) => ({ ...prev, [pid]: e.target.value }))
+                                }
+                                className="pr-6 h-8 text-xs font-semibold"
+                              />
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">%</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
 

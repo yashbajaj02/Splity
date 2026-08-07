@@ -25,6 +25,7 @@ import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { QrPayDialog } from "@/components/QrPayDialog";
 import { PaidDialog } from "@/components/PaidDialog";
 import { ExpenseBreakdownSheet } from "@/components/ExpenseBreakdownSheet";
+import { ExpenseDetailsModal } from "@/components/ExpenseDetailsModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -968,6 +969,7 @@ const ExpenseRow = memo(function ExpenseRow({
   initialSplits?: ExpenseSplit[];
   acceptedMembers?: { id: string; name: string }[];
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const canShowActions = expense.created_by === currentUserId && canRemove;
   const descLower = expense.description.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
@@ -997,79 +999,107 @@ const ExpenseRow = memo(function ExpenseRow({
   const thirdLine = formatCardDate(expense.created_at);
 
   return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-        <Receipt className="h-5 w-5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold">{title}</p>
-        <p className="text-xs text-muted-foreground">{secondLine}</p>
-        <p className="text-xs text-muted-foreground">{thirdLine}</p>
-      </div>
-      <div className="flex flex-col items-end shrink-0">
-        <div className="text-right">
-          <p className="font-display font-bold">
-            <CountUpCurrency amount={Number(expense.amount)} />
-          </p>
-          {isSettlement ? (
-            <p className="text-xs text-muted-foreground">{paymentMethod}</p>
-          ) : null}
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailsOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDetailsOpen(true);
+          }
+        }}
+        className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-xs transition-colors hover:border-primary/40 cursor-pointer select-none active:scale-[0.99]"
+      >
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
+          <Receipt className="h-5 w-5" />
         </div>
-        {canShowActions ? (
-          <div className="mt-1 flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2.5">
-            <Suspense fallback={null}>
-              <AddExpenseDialog
-                userId={currentUserId}
-                groupId={expense.group_id}
-                mode="edit"
-                initialExpense={expense}
-                initialSplits={initialSplits}
-                members={acceptedMembers}
-                trigger={
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-semibold text-foreground">{title}</p>
+          <p className="text-xs text-muted-foreground truncate">{secondLine}</p>
+          <p className="text-xs text-muted-foreground truncate">{thirdLine}</p>
+        </div>
+        <div className="flex flex-col items-end shrink-0">
+          <div className="text-right">
+            <p className="font-display font-bold text-foreground">
+              <CountUpCurrency amount={Number(expense.amount)} />
+            </p>
+            {isSettlement ? (
+              <p className="text-xs text-muted-foreground">{paymentMethod}</p>
+            ) : null}
+          </div>
+          {canShowActions ? (
+            <div
+              className="mt-1 flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2.5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Suspense fallback={null}>
+                <AddExpenseDialog
+                  userId={currentUserId}
+                  groupId={expense.group_id}
+                  mode="edit"
+                  initialExpense={expense}
+                  initialSplits={initialSplits}
+                  members={acceptedMembers}
+                  trigger={
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6 rounded-md text-emerald-600 hover:bg-emerald-50 hover:text-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                      title="Edit"
+                      aria-label="Edit expense"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  }
+                />
+              </Suspense>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-6 w-6 rounded-md text-emerald-600 hover:bg-emerald-50 hover:text-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
-                    title="Edit"
-                    aria-label="Edit expense"
+                    disabled={removeBusy}
+                    className="h-6 w-6 rounded-md text-red-600 hover:bg-red-50 hover:text-red-500 dark:text-red-400 dark:hover:bg-red-950/40"
+                    title="Delete"
+                    aria-label="Delete expense"
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
-                }
-              />
-            </Suspense>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  disabled={removeBusy}
-                  className="h-6 w-6 rounded-md text-red-600 hover:bg-red-50 hover:text-red-500 dark:text-red-400 dark:hover:bg-red-950/40"
-                  title="Delete"
-                  aria-label="Delete expense"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Remove this expense?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    You can remove an expense only within 5 hours of adding it.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={onRemove} disabled={removeBusy}>
-                    Remove
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        ) : null}
+                </AlertDialogTrigger>
+                <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Remove this expense?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You can remove an expense only within 5 hours of adding it.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={onRemove} disabled={removeBusy}>
+                      Remove
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </div>
+
+      <ExpenseDetailsModal
+        open={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        expense={expense}
+        currentUserId={currentUserId}
+        creatorDisplayName={creatorDisplayName}
+        initialSplits={initialSplits}
+        acceptedMembers={acceptedMembers}
+      />
+    </>
   );
 });
 
