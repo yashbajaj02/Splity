@@ -2,16 +2,9 @@ import { useEffect, useState } from "react";
 import { formatCurrency } from "@/lib/debt";
 
 const prefersReducedMotion =
-  typeof window !== "undefined" &&
-  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export function CountUpCurrency({
-  amount,
-  duration = 800,
-}: {
-  amount: number;
-  duration?: number;
-}) {
+export function CountUpCurrency({ amount, duration = 800 }: { amount: number; duration?: number }) {
   const [displayAmount, setDisplayAmount] = useState(0);
 
   useEffect(() => {

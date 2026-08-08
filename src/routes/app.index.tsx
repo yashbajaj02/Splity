@@ -1,3 +1,4 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -60,14 +61,8 @@ function GroupsHome() {
   );
   const greeting = getGreeting(now);
   const initials = getInitials(profile?.full_name ?? firstName, session?.user?.email ?? "");
-  const totalOwe = (settleQuery.data?.iOwe ?? []).reduce(
-    (s, b) => s + b.amount,
-    0,
-  );
-  const totalOwed = (settleQuery.data?.owedToMe ?? []).reduce(
-    (s, b) => s + b.amount,
-    0,
-  );
+  const totalOwe = (settleQuery.data?.iOwe ?? []).reduce((s, b) => s + b.amount, 0);
+  const totalOwed = (settleQuery.data?.owedToMe ?? []).reduce((s, b) => s + b.amount, 0);
 
   return (
     <>
@@ -122,9 +117,7 @@ function GroupsHome() {
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
               <Users className="h-6 w-6" />
             </div>
-            <h3 className="mt-4 font-display text-base font-semibold">
-              Groups could not load
-            </h3>
+            <h3 className="mt-4 font-display text-base font-semibold">Groups could not load</h3>
             <p className="mt-1 text-sm text-muted-foreground">
               {(groupsQuery.error as Error).message}
             </p>
@@ -154,9 +147,7 @@ function GroupsHome() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold">{g.name}</p>
                   {g.description && (
-                    <p className="truncate text-sm text-muted-foreground">
-                      {g.description}
-                    </p>
+                    <p className="truncate text-sm text-muted-foreground">{g.description}</p>
                   )}
                 </div>
                 <ChevronRight className="h-5 w-5 text-muted-foreground" />
@@ -166,10 +157,7 @@ function GroupsHome() {
         )}
       </div>
 
-      <AddExpenseFab
-        userId={userId}
-        groups={groups.map((g) => ({ id: g.id, name: g.name }))}
-      />
+      <AddExpenseFab userId={userId} groups={groups.map((g) => ({ id: g.id, name: g.name }))} />
     </>
   );
 }
@@ -204,8 +192,7 @@ function EmptyState({ userId }: { userId: string }) {
       </div>
       <h3 className="mt-4 font-display text-base font-semibold">No groups yet</h3>
       <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">
-        Create your first group and invite friends by their username to start
-        splitting expenses.
+        Create your first group and invite friends by their username to start splitting expenses.
       </p>
       <div className="mt-5 flex justify-center">
         <CreateGroupDialog userId={userId} />
@@ -229,7 +216,7 @@ function CreateGroupDialog({ userId }: { userId: string }) {
       setName("");
       setDescription("");
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
   });
 
   return (
@@ -239,12 +226,12 @@ function CreateGroupDialog({ userId }: { userId: string }) {
           <Plus className="mr-1 h-4 w-4" /> New group
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="p-0 gap-0">
+        <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
           <DialogTitle>Create a group</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="space-y-4 p-6 flex-1 overflow-y-auto"
           onSubmit={(e) => {
             e.preventDefault();
             if (!name.trim()) return;
@@ -269,11 +256,9 @@ function CreateGroupDialog({ userId }: { userId: string }) {
               rows={2}
             />
           </div>
-          <DialogFooter>
+          <DialogFooter className="pt-2">
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Create group
             </Button>
           </DialogFooter>

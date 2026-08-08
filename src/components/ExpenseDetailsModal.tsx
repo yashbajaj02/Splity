@@ -13,12 +13,7 @@ import {
 } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import {
-  Dialog,
-  DialogPortal,
-  DialogOverlay,
-  DialogClose,
-} from "@/components/ui/dialog";
+import { Dialog, DialogPortal, DialogOverlay, DialogClose } from "@/components/ui/dialog";
 import {
   getGroup,
   getSplitsForGroup,
@@ -149,11 +144,7 @@ export function ExpenseDetailsModal({
 
       // 3. Member Profiles
       const memberIds = Array.from(
-        new Set([
-          expense.paid_by,
-          expense.created_by,
-          ...splits.map((s) => s.user_id),
-        ]),
+        new Set([expense.paid_by, expense.created_by, ...splits.map((s) => s.user_id)]),
       );
 
       const profiles = await getProfilesByIds(memberIds);
@@ -192,7 +183,9 @@ export function ExpenseDetailsModal({
     paidByName = getCleanMemberName(propCreatorDisplayName);
   }
 
-  const paidByUsername = paidByProfile?.username ? `@${paidByProfile.username.replace(/^@/, "")}` : null;
+  const paidByUsername = paidByProfile?.username
+    ? `@${paidByProfile.username.replace(/^@/, "")}`
+    : null;
 
   // Created by info
   const createdByProfile = profileMap.get(expense.created_by);
@@ -260,11 +253,6 @@ export function ExpenseDetailsModal({
                   </p>
                 </div>
               </div>
-
-              <DialogClose className="rounded-full p-2 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring shrink-0">
-                <X className="h-5 w-5" />
-                <span className="sr-only">Close</span>
-              </DialogClose>
             </div>
 
             {/* Scrollable Body */}
@@ -309,9 +297,7 @@ export function ExpenseDetailsModal({
                       {paidByName.slice(0, 2).toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                      <p className="font-semibold text-sm text-foreground truncate">
-                        {paidByName}
-                      </p>
+                      <p className="font-semibold text-sm text-foreground truncate">{paidByName}</p>
                       {paidByUsername && (
                         <p className="text-xs text-muted-foreground truncate">{paidByUsername}</p>
                       )}
@@ -370,19 +356,26 @@ export function ExpenseDetailsModal({
                       const owedAmount = Number(split.amount_owed);
                       const canViewAllNotes = expense.created_by === currentUserId;
                       const canViewNote = canViewAllNotes || isMe;
-                      const note = canViewNote ? (split.note || splitNotes[split.user_id] || null) : null;
+                      const note = canViewNote
+                        ? split.note || splitNotes[split.user_id] || null
+                        : null;
 
                       return (
                         <div key={split.id || split.user_id} className="p-3.5">
                           {/* Desktop Layout (3-column) */}
                           <div className="hidden sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center">
                             <div className="flex items-center gap-3 min-w-0">
-                              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                              <div
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
+                              >
                                 {memberName.slice(0, 2).toUpperCase()}
                               </div>
                               <div className="min-w-0">
                                 <p className="font-medium text-sm text-foreground truncate">
-                                  {memberName} {isMe && <span className="text-xs text-primary font-normal">(You)</span>}
+                                  {memberName}{" "}
+                                  {isMe && (
+                                    <span className="text-xs text-primary font-normal">(You)</span>
+                                  )}
                                 </p>
                               </div>
                             </div>
@@ -408,7 +401,9 @@ export function ExpenseDetailsModal({
                                       <h4 className="font-medium text-foreground text-xs uppercase tracking-wider text-muted-foreground">
                                         Note for {memberName}
                                       </h4>
-                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">{note}</p>
+                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">
+                                        {note}
+                                      </p>
                                     </div>
                                   </PopoverContent>
                                 </Popover>
@@ -422,12 +417,19 @@ export function ExpenseDetailsModal({
                           <div className="sm:hidden space-y-2">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3 min-w-0">
-                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                                <div
+                                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
+                                >
                                   {memberName.slice(0, 2).toUpperCase()}
                                 </div>
                                 <div className="min-w-0">
                                   <p className="font-medium text-sm text-foreground truncate">
-                                    {memberName} {isMe && <span className="text-xs text-primary font-normal">(You)</span>}
+                                    {memberName}{" "}
+                                    {isMe && (
+                                      <span className="text-xs text-primary font-normal">
+                                        (You)
+                                      </span>
+                                    )}
                                   </p>
                                 </div>
                               </div>
@@ -454,7 +456,9 @@ export function ExpenseDetailsModal({
                                       <h4 className="font-medium text-foreground text-xs uppercase tracking-wider text-muted-foreground">
                                         Note for {memberName}
                                       </h4>
-                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">{note}</p>
+                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">
+                                        {note}
+                                      </p>
                                     </div>
                                   </PopoverContent>
                                 </Popover>
@@ -476,7 +480,9 @@ export function ExpenseDetailsModal({
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Date & Time</span>
-                  <span className="font-medium text-foreground">{formatFullDateTime(expense.created_at)}</span>
+                  <span className="font-medium text-foreground">
+                    {formatFullDateTime(expense.created_at)}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Settlement Status</span>

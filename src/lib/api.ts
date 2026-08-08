@@ -13,7 +13,10 @@ const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
 
 export function getCleanExpenseDescription(rawDescription: string): string {
   if (!rawDescription) return "";
-  return rawDescription.replace(/\n?<!--SPLIT_NOTES:.*?-->/s, "").trim();
+  let clean = rawDescription.replace(/\n?<!--SPLIT_NOTES:.*?-->/s, "");
+  // Remove settlement metadata appended with || {"settled": ...}
+  clean = clean.replace(/\s*\|\|\s*\{.*\}\s*$/s, "");
+  return clean.trim();
 }
 
 export function parseExpenseDescription(rawDescription: string): {
@@ -25,7 +28,12 @@ export function parseExpenseDescription(rawDescription: string): {
 
 export function getCleanMemberName(name: string): string {
   if (!name) return "Member";
-  return name.replace(/\s*\(@[a-zA-Z0-9._-]+\)/g, "").replace(/^@/, "").trim() || name;
+  return (
+    name
+      .replace(/\s*\(@[a-zA-Z0-9._-]+\)/g, "")
+      .replace(/^@/, "")
+      .trim() || name
+  );
 }
 
 function buildExpenseAddedMessage(opts: {
@@ -246,9 +254,23 @@ export async function getGroupExpenses(groupId: string): Promise<Expense[]> {
     .eq("group_id", groupId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []).map(exp => ({
-    ...exp,
-    description: getCleanExpenseDescription(exp.description)
+  return (data ?? []).map((e) => ({
+    ...e,
+    description: getCleanExpenseDescription(e.description),
+  })) as Expense[];
+}
+
+export async function getAllMyExpenses(userId: string): Promise<Expense[]> {
+  // RLS will automatically filter this to only expenses the user is involved in
+  const { data, error } = await supabase
+    .from("expenses")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []).map((e) => ({
+    ...e,
+    description: getCleanExpenseDescription(e.description),
   })) as Expense[];
 }
 
@@ -264,19 +286,72 @@ export async function getExpense(expenseId: string): Promise<Expense | null> {
 }
 
 export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]> {
-  const { data, error } = await supabase
+  const session = await supabase.auth.getSession();
+  const currentUserId = session.data.session?.user?.id;
+
+  // 1. Fetch splits without notes (public to group)
+  // We explicitly omit "note" from the select list to prevent it from crossing the network
+  const { data: splitsData, error: splitsError } = await supabase
     .from("expense_splits")
-    .select("*, expenses!inner(group_id, description)")
+    .select(
+      "id, expense_id, user_id, amount_owed, expenses!inner(group_id, description, created_by)",
+    )
     .eq("expenses.group_id", groupId);
-  if (error) throw error;
-  return (data ?? []).map((d: any) => {
+
+  if (splitsError) throw splitsError;
+
+  // 2. Fetch notes for ONLY authorized rows (my splits + expenses I created)
+  const notesMap: Record<string, string> = {};
+
+  if (currentUserId && splitsData && splitsData.length > 0) {
+    const myOwnedExpenses = Array.from(
+      new Set(
+        splitsData.filter((s) => s.expenses.created_by === currentUserId).map((s) => s.expense_id),
+      ),
+    );
+
+    // Query A: My own notes
+    const { data: myNotes } = await supabase
+      .from("expense_splits")
+      .select("id, note, expenses!inner(group_id)")
+      .eq("expenses.group_id", groupId)
+      .eq("user_id", currentUserId)
+      .not("note", "is", null);
+
+    if (myNotes) {
+      for (const n of myNotes) {
+        if (n.note) notesMap[n.id] = n.note;
+      }
+    }
+
+    // Query B: Notes for expenses I created
+    if (myOwnedExpenses.length > 0) {
+      for (let i = 0; i < myOwnedExpenses.length; i += 100) {
+        const chunk = myOwnedExpenses.slice(i, i + 100);
+        const { data: ownedNotes } = await supabase
+          .from("expense_splits")
+          .select("id, note")
+          .in("expense_id", chunk)
+          .not("note", "is", null);
+
+        if (ownedNotes) {
+          for (const n of ownedNotes) {
+            if (n.note) notesMap[n.id] = n.note;
+          }
+        }
+      }
+    }
+  }
+
+  return (splitsData ?? []).map((d: any) => {
     const { expenses, ...split } = d;
     const legacyNotes = expenses?.description
       ? parseExpenseDescription(expenses.description).splitNotes
       : {};
+
     return {
       ...split,
-      note: split.note || legacyNotes[split.user_id] || null,
+      note: notesMap[split.id] || legacyNotes[split.user_id] || null,
     };
   }) as ExpenseSplit[];
 }
@@ -312,11 +387,11 @@ export async function addExpense(opts: {
     amount_owed: s.amount,
     ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
-  let { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  const { error: sErr } = await supabase.from("expense_splits").insert(rows);
   if (sErr) {
     if (/note|column/i.test(sErr.message)) {
       throw new Error(
-        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;"
+        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;",
       );
     }
     throw sErr;
@@ -324,11 +399,7 @@ export async function addExpense(opts: {
 
   // 3. Send notifications asynchronously without failing the expense operation
   if (!cleanDescription.toLowerCase().includes("settlement")) {
-    Promise.all([
-      getGroup(opts.groupId),
-      getProfile(opts.createdBy),
-      getGroupMembers(opts.groupId),
-    ])
+    Promise.all([getGroup(opts.groupId), getProfile(opts.createdBy), getGroupMembers(opts.groupId)])
       .then(async ([group, creator, members]) => {
         const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
         const recipients = members
@@ -365,7 +436,7 @@ export async function addExpense(opts: {
             };
           });
 
-          let { error: notificationError } = await supabase
+          const { error: notificationError } = await supabase
             .from("notifications")
             .insert(notificationRows);
 
@@ -461,11 +532,11 @@ export async function updateExpense(opts: {
     amount_owed: s.amount,
     ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
-  let { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  const { error: sErr } = await supabase.from("expense_splits").insert(rows);
   if (sErr) {
     if (/note|column/i.test(sErr.message)) {
       throw new Error(
-        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;"
+        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;",
       );
     }
     throw sErr;
@@ -484,16 +555,22 @@ const getSettlementLocks = () => {
   return (window as any).__settlementLocks as Set<string>;
 };
 
-async function getRemainingDebt(payerId: string, payeeId: string, groupId?: string): Promise<number> {
-  const groups = groupId ? [{ id: groupId, name: "", description: null, created_by: "", created_at: "" }] : await getMyGroups(payerId);
+async function getRemainingDebt(
+  payerId: string,
+  payeeId: string,
+  groupId?: string,
+): Promise<number> {
+  const groups = groupId
+    ? [{ id: groupId, name: "", description: null, created_by: "", created_at: "" }]
+    : await getMyGroups(payerId);
   if (groups.length === 0) return 0;
   const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
   const allExpenses: Expense[] = expenseArrays.flat();
   if (allExpenses.length === 0) return 0;
-  
+
   const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
   const splits = splitsArrays.flat();
-  
+
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
   for (const s of splits) {
     (splitsByExpense[s.expense_id] ??= []).push(s);
@@ -527,7 +604,9 @@ export async function settleByCash(opts: {
     const expense = await addExpense({
       groupId: opts.groupId,
       createdBy: opts.payerId,
-      description: opts.settledExpenses ? `Cash settlement || ${JSON.stringify({ settled: opts.settledExpenses })}` : "Cash settlement",
+      description: opts.settledExpenses
+        ? `Cash settlement || ${JSON.stringify({ settled: opts.settledExpenses })}`
+        : "Cash settlement",
       amount: opts.amount,
       splits: [{ userId: opts.payeeId, amount: opts.amount }],
     });
@@ -544,7 +623,7 @@ export async function settleByCash(opts: {
       sender_upi: payer?.upi_id ?? null,
     };
     try {
-      let { error } = await supabase.from("notifications").insert(row);
+      const { error } = await supabase.from("notifications").insert(row);
       if (error && /sender_username|column/i.test(error.message)) {
         const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
         await supabase.from("notifications").insert({
@@ -591,7 +670,9 @@ export async function settleByUpi(opts: {
     const expense = await addExpense({
       groupId: opts.groupId,
       createdBy: opts.payerId,
-      description: opts.settledExpenses ? `UPI settlement || ${JSON.stringify({ settled: opts.settledExpenses })}` : "UPI settlement",
+      description: opts.settledExpenses
+        ? `UPI settlement || ${JSON.stringify({ settled: opts.settledExpenses })}`
+        : "UPI settlement",
       amount: opts.amount,
       splits: [{ userId: opts.payeeId, amount: opts.amount }],
     });
@@ -608,7 +689,7 @@ export async function settleByUpi(opts: {
       sender_upi: payer?.upi_id ?? null,
     };
     try {
-      let { error } = await supabase.from("notifications").insert(row);
+      const { error } = await supabase.from("notifications").insert(row);
       if (error && /sender_username|column/i.test(error.message)) {
         const { recipient_id, sender_id, type, status, group_id, amount, message } = row;
         await supabase.from("notifications").insert({
@@ -624,7 +705,6 @@ export async function settleByUpi(opts: {
     } catch (e) {
       console.error("Non-fatal notification insertion error in settleByUpi:", e);
     }
-
   } finally {
     locks.delete(lockKey);
   }
@@ -639,9 +719,9 @@ export async function getNotifications(userId: string): Promise<AppNotification[
     .eq("recipient_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []).map(notif => ({
+  return (data ?? []).map((notif) => ({
     ...notif,
-    message: notif.message ? getCleanExpenseDescription(notif.message) : notif.message
+    message: notif.message ? getCleanExpenseDescription(notif.message) : notif.message,
   })) as AppNotification[];
 }
 

@@ -1,12 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Loader2, CheckCircle2, Receipt, ShieldCheck } from "lucide-react";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-} from "@/components/ui/drawer";
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
 import {
   getMyGroups,
   getGroupExpenses,
@@ -16,7 +11,6 @@ import {
   getCleanMemberName,
 } from "@/lib/api";
 import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
-
 
 interface ActivityDetailsSheetProps {
   open: boolean;
@@ -53,30 +47,30 @@ export function ActivityDetailsSheet({
         groups = groups.filter((g) => g.id === notification.group_id);
       }
 
-      const expenseArrays = await Promise.all(
-        groups.map((g) => getGroupExpenses(g.id)),
-      );
+      const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
       const allExpenses: Expense[] = expenseArrays.flat();
-      
+
       const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
       const splits = splitsArrays.flat();
-      
+
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);
       }
-      
-      const allUserIds = Array.from(new Set([
-        ...allExpenses.map(e => e.paid_by),
-        ...allExpenses.map(e => e.created_by),
-        ...splits.map(s => s.user_id),
-      ]));
+
+      const allUserIds = Array.from(
+        new Set([
+          ...allExpenses.map((e) => e.paid_by),
+          ...allExpenses.map((e) => e.created_by),
+          ...splits.map((s) => s.user_id),
+        ]),
+      );
       const profiles = await getProfilesByIds(allUserIds);
       const profilesById: Record<string, Profile> = {};
       for (const p of profiles) {
         profilesById[p.id] = p;
       }
-      
+
       return { allExpenses, splitsByExpense, profilesById };
     },
   });
@@ -120,9 +114,7 @@ export function ActivityDetailsSheet({
       });
     }
   } else if (isExpense) {
-    const matched = relevantExpenses.find(
-      (e) => e.description === notification.message,
-    );
+    const matched = relevantExpenses.find((e) => e.description === notification.message);
     if (matched) {
       displayExpenses = [matched];
     } else if (relevantExpenses.length > 0) {
@@ -158,7 +150,8 @@ export function ActivityDetailsSheet({
     }
 
     const payerProfile = profilesById[exp.paid_by];
-    const payerName = payerProfile?.full_name || payerProfile?.username?.replace(/^@/, "") || "Someone";
+    const payerName =
+      payerProfile?.full_name || payerProfile?.username?.replace(/^@/, "") || "Someone";
 
     const canViewAllNotes = exp.created_by === currentUserId;
 
@@ -170,7 +163,7 @@ export function ActivityDetailsSheet({
         else if (p?.username?.trim()) name = p.username.trim().replace(/^@/, "");
       }
       const canViewNote = canViewAllNotes || s.user_id === currentUserId;
-      const note = canViewNote ? (s.note || splitNotes[s.user_id] || null) : null;
+      const note = canViewNote ? s.note || splitNotes[s.user_id] || null : null;
       return {
         userId: s.user_id,
         name,
@@ -190,8 +183,6 @@ export function ActivityDetailsSheet({
       splits: memberSplits,
     };
   });
-
-
 
   const isUpi = notification.message?.toLowerCase().includes("upi");
   const paymentMethod = isUpi ? "UPI" : "Cash";
@@ -217,9 +208,7 @@ export function ActivityDetailsSheet({
                 </span>
               </DrawerTitle>
               {groupName && (
-                <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                  Group • {groupName}
-                </p>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">Group • {groupName}</p>
               )}
             </div>
 
@@ -245,9 +234,7 @@ export function ActivityDetailsSheet({
                 <div key={item.id} className="space-y-5">
                   {/* EXPENSE INFORMATION */}
                   <div>
-                    <p className="font-semibold text-lg text-foreground truncate">
-                      {item.title}
-                    </p>
+                    <p className="font-semibold text-lg text-foreground truncate">{item.title}</p>
                     <div className="mt-3">
                       <p className="text-xs text-muted-foreground">Added by</p>
                       <p className="text-sm font-medium text-foreground">{item.payerName}</p>
@@ -284,7 +271,8 @@ export function ActivityDetailsSheet({
                   {item.splits && item.splits.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                        Split Details ({item.splits.length} {item.splits.length === 1 ? "member" : "members"})
+                        Split Details ({item.splits.length}{" "}
+                        {item.splits.length === 1 ? "member" : "members"})
                       </p>
                       <div className="divide-y divide-border/40 rounded-xl border border-border/60 bg-card overflow-hidden">
                         {item.splits.map((s) => {
@@ -303,7 +291,12 @@ export function ActivityDetailsSheet({
                                     {s.name.slice(0, 2).toUpperCase()}
                                   </div>
                                   <p className="text-sm font-medium text-foreground truncate">
-                                    {s.name} {isSelf && <span className="text-xs text-primary font-normal">(You)</span>}
+                                    {s.name}{" "}
+                                    {isSelf && (
+                                      <span className="text-xs text-primary font-normal">
+                                        (You)
+                                      </span>
+                                    )}
                                   </p>
                                 </div>
                                 <p className="text-sm font-bold font-display text-foreground">
@@ -312,7 +305,9 @@ export function ActivityDetailsSheet({
                               </div>
                               {s.note ? (
                                 <div className="ml-9.5 flex items-start gap-1.5 rounded-lg bg-secondary/50 px-2.5 py-1 text-xs text-foreground border border-border/40">
-                                  <span className="font-semibold text-muted-foreground shrink-0">Note:</span>
+                                  <span className="font-semibold text-muted-foreground shrink-0">
+                                    Note:
+                                  </span>
                                   <span className="break-words font-medium">{s.note}</span>
                                 </div>
                               ) : null}

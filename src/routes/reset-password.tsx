@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
+import { getCleanErrorMessage } from "@/lib/utils";
 
 export const Route = createFileRoute("/reset-password")({
   ssr: false,
@@ -40,8 +41,7 @@ function ResetPasswordPage() {
     return "";
   }, [confirmPassword, confirmTouched, password]);
 
-  const isValid =
-    password.length >= MIN_PASSWORD_LENGTH && password === confirmPassword;
+  const isValid = password.length >= MIN_PASSWORD_LENGTH && password === confirmPassword;
 
   const linkExpired = !loading && (!session || !isPasswordRecovery);
 
@@ -63,7 +63,7 @@ function ResetPasswordPage() {
     setBusy(false);
 
     if (error) {
-      toast.error(error.message);
+      toast.error(getCleanErrorMessage(error));
       return;
     }
 
@@ -82,7 +82,7 @@ function ResetPasswordPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5 py-10">
-      <div className="w-full max-w-sm">
+      <div className="w-[calc(100vw-2rem)] sm:w-full max-w-sm">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2">
           <AppLogo className="h-9 w-9" />
           <span className="font-display text-lg font-bold">Splity</span>
@@ -98,12 +98,8 @@ function ResetPasswordPage() {
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive">
                 <AlertCircle className="h-6 w-6" />
               </div>
-              <h1 className="mt-4 font-display text-xl font-bold">
-                Recovery link expired.
-              </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Request another password reset.
-              </p>
+              <h1 className="mt-4 font-display text-xl font-bold">Recovery link expired.</h1>
+              <p className="mt-2 text-sm text-muted-foreground">Request another password reset.</p>
               <Button className="mt-6 w-full" onClick={() => navigate({ to: "/auth" })}>
                 Back to Login
               </Button>
@@ -116,9 +112,7 @@ function ResetPasswordPage() {
               <h1 className="mt-4 font-display text-xl font-bold">
                 Password updated successfully.
               </h1>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Taking you back to sign in.
-              </p>
+              <p className="mt-2 text-sm text-muted-foreground">Taking you back to sign in.</p>
             </div>
           ) : (
             <>

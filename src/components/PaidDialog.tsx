@@ -1,13 +1,9 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, CheckCircle2, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,7 +13,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { getMyGroups, getGroupExpenses, getSplitsForGroup, getCleanExpenseDescription } from "@/lib/api";
+import {
+  getMyGroups,
+  getGroupExpenses,
+  getSplitsForGroup,
+  getCleanExpenseDescription,
+} from "@/lib/api";
 import { computeExpenseBreakdown } from "@/lib/breakdown";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
 
@@ -47,10 +48,10 @@ export function PaidDialog({
   const [open, setOpen] = useState(false);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [method, setMethod] = useState<PaymentMethod>("upi");
-  
+
   // Track manual input vs auto-calculated amount
   const [selectedState, setSelectedState] = useState<Record<string, number> | null>(
-    selectedExpenses ?? null
+    selectedExpenses ?? null,
   );
 
   useEffect(() => {
@@ -68,14 +69,12 @@ export function PaidDialog({
     enabled: open && !!payerId && !!payeeId,
     queryFn: async () => {
       const groups = await getMyGroups(payerId);
-      const expenseArrays = await Promise.all(
-        groups.map((g) => getGroupExpenses(g.id)),
-      );
+      const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
       const allExpenses: Expense[] = expenseArrays.flat();
-      
+
       const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
       const splits = splitsArrays.flat();
-      
+
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);
@@ -84,7 +83,7 @@ export function PaidDialog({
     },
   });
 
-  const unsettledExpenses = (breakdownData ?? []).filter(e => e.remainingAmount > 0);
+  const unsettledExpenses = (breakdownData ?? []).filter((e) => e.remainingAmount > 0);
   const isAllSelected = selectedState === null;
 
   const displayAmount = manualAmount !== null ? manualAmount : amount.toFixed(2);
@@ -98,10 +97,15 @@ export function PaidDialog({
 
   function toggleExpense(expenseId: string, remainingAmount: number) {
     let next: Record<string, number> | null;
-    const currentMap = selectedState ?? unsettledExpenses.reduce((acc, curr) => {
-      acc[curr.expense.id] = curr.remainingAmount;
-      return acc;
-    }, {} as Record<string, number>);
+    const currentMap =
+      selectedState ??
+      unsettledExpenses.reduce(
+        (acc, curr) => {
+          acc[curr.expense.id] = curr.remainingAmount;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
 
     const updated = { ...currentMap };
     if (updated[expenseId]) {
@@ -133,28 +137,50 @@ export function PaidDialog({
   }
 
   const upiMutation = useMutation({
-    mutationFn: (v: { groupId: string; payeeId: string; amount: number; settledExpenses?: Record<string, number> }) =>
-      settleByUpi({ groupId: v.groupId, payerId, payeeId: v.payeeId, amount: v.amount, settledExpenses: v.settledExpenses }),
+    mutationFn: (v: {
+      groupId: string;
+      payeeId: string;
+      amount: number;
+      settledExpenses?: Record<string, number>;
+    }) =>
+      settleByUpi({
+        groupId: v.groupId,
+        payerId,
+        payeeId: v.payeeId,
+        amount: v.amount,
+        settledExpenses: v.settledExpenses,
+      }),
     onSuccess: (_data, vars) => {
       toast.success(`Settled ₹${vars.amount.toFixed(2)} via UPI.`);
       invalidate();
       setOpen(false);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
     onSettled: () => {
       isSubmittingRef.current = false;
     },
   });
 
   const cashMutation = useMutation({
-    mutationFn: (v: { groupId: string; payeeId: string; amount: number; settledExpenses?: Record<string, number> }) =>
-      settleByCash({ groupId: v.groupId, payerId, payeeId: v.payeeId, amount: v.amount, settledExpenses: v.settledExpenses }),
+    mutationFn: (v: {
+      groupId: string;
+      payeeId: string;
+      amount: number;
+      settledExpenses?: Record<string, number>;
+    }) =>
+      settleByCash({
+        groupId: v.groupId,
+        payerId,
+        payeeId: v.payeeId,
+        amount: v.amount,
+        settledExpenses: v.settledExpenses,
+      }),
     onSuccess: (_data, vars) => {
       toast.success(`Cash settlement of ₹${vars.amount.toFixed(2)} recorded.`);
       invalidate();
       setOpen(false);
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
     onSettled: () => {
       isSubmittingRef.current = false;
     },
@@ -190,9 +216,11 @@ export function PaidDialog({
       return;
     }
     isSubmittingRef.current = true;
-    
+
     // Distribute parsed amount across selected expenses
-    const selectedList = unsettledExpenses.filter(e => isAllSelected || !!selectedState?.[e.expense.id]);
+    const selectedList = unsettledExpenses.filter(
+      (e) => isAllSelected || !!selectedState?.[e.expense.id],
+    );
     const settledToSave: Record<string, number> = {};
     let pool = parsed;
     for (const exp of selectedList) {
@@ -229,8 +257,8 @@ export function PaidDialog({
 
       {/* ── "I've Already Paid" Modal ── */}
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm rounded-2xl p-0 overflow-hidden">
-          <DialogHeader className="px-6 pt-6 pb-4 border-b border-border text-left">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-sm rounded-2xl p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0 text-left">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -258,7 +286,7 @@ export function PaidDialog({
             </div>
           </DialogHeader>
 
-          <div className="px-6 py-5 space-y-5">
+          <div className="px-6 py-5 space-y-5 flex-1 overflow-y-auto">
             {/* Payment Method */}
             <fieldset className="space-y-2">
               <legend className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
@@ -284,9 +312,7 @@ export function PaidDialog({
                 />
                 <div>
                   <p className="text-sm font-semibold">UPI Paid</p>
-                  <p className="text-xs text-muted-foreground">
-                    GPay, PhonePe, Paytm, etc.
-                  </p>
+                  <p className="text-xs text-muted-foreground">GPay, PhonePe, Paytm, etc.</p>
                 </div>
               </label>
 
@@ -309,16 +335,17 @@ export function PaidDialog({
                 />
                 <div>
                   <p className="text-sm font-semibold">Cash Settlement</p>
-                  <p className="text-xs text-muted-foreground">
-                    Paid in person
-                  </p>
+                  <p className="text-xs text-muted-foreground">Paid in person</p>
                 </div>
               </label>
             </fieldset>
 
             {/* Amount */}
             <div className="space-y-1.5">
-              <Label htmlFor="paid-amount" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              <Label
+                htmlFor="paid-amount"
+                className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+              >
                 Amount Paid
               </Label>
               <div className="relative">
@@ -347,53 +374,49 @@ export function PaidDialog({
             </div>
 
             {/* View Expense Breakdown (Collapsible) */}
-            <Collapsible
-                open={breakdownOpen}
-                onOpenChange={setBreakdownOpen}
-                className="w-full"
-              >
-                <CollapsibleTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="w-full text-xs text-primary hover:text-primary/90 hover:bg-primary/5 gap-1 h-9 font-medium"
+            <Collapsible open={breakdownOpen} onOpenChange={setBreakdownOpen} className="w-full">
+              <CollapsibleTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="w-full text-xs text-primary hover:text-primary/90 hover:bg-primary/5 gap-1 h-9 font-medium"
+                >
+                  View Expense Breakdown <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-3 pt-2">
+                <div className="flex items-center space-x-2 px-1">
+                  <Checkbox
+                    id="paid-select-all"
+                    checked={isAllSelected}
+                    onCheckedChange={toggleAll}
+                  />
+                  <label
+                    htmlFor="paid-select-all"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                   >
-                    View Expense Breakdown <ChevronRight className="h-3.5 w-3.5" />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-3 pt-2">
-                  <div className="flex items-center space-x-2 px-1">
-                    <Checkbox
-                      id="paid-select-all"
-                      checked={isAllSelected}
-                      onCheckedChange={toggleAll}
-                    />
-                    <label
-                      htmlFor="paid-select-all"
-                      className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                    >
-                      Select All
-                    </label>
-                  </div>
-                  <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 rounded-md border border-border/40 p-2">
-                    {unsettledExpenses.length === 0 ? (
-                      <p className="text-xs text-center text-muted-foreground py-4">
-                        No pending expenses found.
-                      </p>
-                    ) : (
-                      unsettledExpenses.map((e) => {
-                        const isSelected = isAllSelected || !!selectedState?.[e.expense.id];
-                        const isPaidByMe = e.expense.paid_by === payerId;
-                        const cardStyle = isPaidByMe
-                          ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
-                          : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
-                        return (
+                    Select All
+                  </label>
+                </div>
+                <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 rounded-md border border-border/40 p-2">
+                  {unsettledExpenses.length === 0 ? (
+                    <p className="text-xs text-center text-muted-foreground py-4">
+                      No pending expenses found.
+                    </p>
+                  ) : (
+                    unsettledExpenses.map((e) => {
+                      const isSelected = isAllSelected || !!selectedState?.[e.expense.id];
+                      const isPaidByMe = e.expense.paid_by === payerId;
+                      const cardStyle = isPaidByMe
+                        ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
+                        : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
+                      return (
                         <div
                           key={e.expense.id}
                           className={`flex items-start space-x-3 p-2 border rounded-lg transition-colors cursor-pointer ${cardStyle}`}
                           onClick={(evt) => {
-                            if ((evt.target as HTMLElement).closest('button')) return;
+                            if ((evt.target as HTMLElement).closest("button")) return;
                             toggleExpense(e.expense.id, e.remainingAmount);
                           }}
                         >
@@ -416,16 +439,21 @@ export function PaidDialog({
                               <p className="text-xs text-muted-foreground">
                                 Your Share: ₹{e.yourShare.toFixed(2)}
                               </p>
-                              <p className={`text-xs font-medium ${isPaidByMe ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}>
+                              <p
+                                className={`text-xs font-medium ${isPaidByMe ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}`}
+                              >
                                 Pending: ₹{e.remainingAmount.toFixed(2)}
                               </p>
                             </div>
-                            
+
                             {/* Payment History Entries */}
                             {e.payments && e.payments.length > 0 && (
                               <div className="mt-2 space-y-1">
                                 {e.payments.map((p, i) => (
-                                  <div key={i} className="flex justify-between items-center px-2 py-1 rounded bg-secondary/60 border border-border/60">
+                                  <div
+                                    key={i}
+                                    className="flex justify-between items-center px-2 py-1 rounded bg-secondary/60 border border-border/60"
+                                  >
                                     <p className="text-[10px] text-foreground/80 font-medium">
                                       Paid ₹{p.amount.toFixed(2)}
                                     </p>
@@ -436,15 +464,14 @@ export function PaidDialog({
                                 ))}
                               </div>
                             )}
-
                           </div>
                         </div>
                       );
                     })
-                    )}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
             {/* Confirm */}
             <Button

@@ -11,6 +11,7 @@ import { AppLogo } from "@/components/AppLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { motion, useReducedMotion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -118,7 +119,7 @@ function AppLayout() {
               <AvatarFallback className="text-[10px] bg-secondary text-primary">
                 {getInitials(
                   profile.full_name ?? userMeta?.full_name ?? userMeta?.name ?? "",
-                  session.user.email ?? ""
+                  session.user.email ?? "",
                 )}
               </AvatarFallback>
             </Avatar>
@@ -138,6 +139,7 @@ function AppLayout() {
 
 function BottomNav({ pendingCount }: { pendingCount: number }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const shouldReduceMotion = useReducedMotion();
 
   const items: {
     to: string;
@@ -163,12 +165,25 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
               key={item.to}
               to={item.to as "/app" | "/app/activity" | "/app/settle"}
               className={cn(
-                "flex flex-1 flex-col items-center gap-1 rounded-lg py-2 text-xs font-medium transition-colors",
+                "group relative flex flex-1 flex-col items-center gap-1 rounded-xl py-2 text-xs font-medium transition-colors duration-200 active:scale-95",
                 active ? "text-primary" : "text-muted-foreground hover:text-foreground",
                 hasBadge && !active && "text-warning",
               )}
             >
-              <span className="relative inline-flex items-center justify-center">
+              {/* Active Indicator Capsule */}
+              {active && (
+                <motion.div
+                  layoutId={shouldReduceMotion ? undefined : "bottomNavIndicator"}
+                  className="absolute inset-0 rounded-xl bg-primary/10"
+                  transition={{ type: "spring", bounce: 0.1, duration: 0.25 }}
+                />
+              )}
+              {/* Hover Indicator */}
+              {!active && (
+                <div className="absolute inset-0 rounded-xl bg-secondary/0 transition-colors duration-200 group-hover:bg-secondary/40" />
+              )}
+
+              <span className="relative z-10 inline-flex items-center justify-center">
                 {hasBadge ? (
                   <span
                     className="pointer-events-none absolute -inset-1.5 rounded-full bg-warning/35 animate-bell-glow"
@@ -177,8 +192,9 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
                 ) : null}
                 <Icon
                   className={cn(
-                    "relative z-[1] h-5 w-5",
+                    "relative z-[1] h-5 w-5 transition-transform duration-200",
                     hasBadge && "animate-bell-ring text-warning",
+                    active && "scale-105",
                   )}
                 />
                 {hasBadge ? (
@@ -187,7 +203,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
                   </span>
                 ) : null}
               </span>
-              {item.label}
+              <span className="relative z-10">{item.label}</span>
             </Link>
           );
         })}

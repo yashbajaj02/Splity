@@ -1,3 +1,4 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
@@ -53,9 +54,7 @@ export function AddExpenseDialog({
   const open = controlledOpen ?? internalOpen;
   const setOpen = controlledOnOpenChange ?? setInternalOpen;
 
-  const [selectedGroupId, setSelectedGroupId] = useState(
-    fixedGroupId ?? groups?.[0]?.id ?? "",
-  );
+  const [selectedGroupId, setSelectedGroupId] = useState(fixedGroupId ?? groups?.[0]?.id ?? "");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [participants, setParticipants] = useState<string[]>([]);
@@ -76,12 +75,10 @@ export function AddExpenseDialog({
 
   const memberIds = useMemo(() => {
     if (fixedMembers) return fixedMembers.map((m) => m.id);
-    return (membersQuery.data ?? [])
-      .filter((m) => m.status === "accepted")
-      .map((m) => m.user_id);
+    return (membersQuery.data ?? []).filter((m) => m.status === "accepted").map((m) => m.user_id);
   }, [fixedMembers, membersQuery.data]);
 
-  let sortedMemberIds = memberIds;
+  const sortedMemberIds = memberIds;
   try {
     sortedMemberIds.sort();
   } catch (e) {
@@ -203,13 +200,10 @@ export function AddExpenseDialog({
     return Math.round((100 - allocatedPercentageSum) * 10) / 10;
   }, [allocatedPercentageSum]);
 
-  const allSelected =
-    members.length > 0 && participants.length === members.length;
+  const allSelected = members.length > 0 && participants.length === members.length;
 
   const toggle = (id: string) =>
-    setParticipants((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
+    setParticipants((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const toggleAll = () => {
     setParticipants(allSelected ? [] : members.map((m) => m.id));
@@ -221,8 +215,7 @@ export function AddExpenseDialog({
       const total = Number(amount);
       if (!description.trim()) throw new Error("Add a description.");
       if (!(total > 0)) throw new Error("Enter a valid amount.");
-      if (participants.length === 0)
-        throw new Error("Select at least one person to split with.");
+      if (participants.length === 0) throw new Error("Select at least one person to split with.");
 
       let splits: { userId: string; amount: number; note?: string }[] = [];
 
@@ -252,7 +245,7 @@ export function AddExpenseDialog({
         });
         if (Math.abs(sum - total) > 0.02) {
           throw new Error(
-            `Allocated amounts (₹${sum.toFixed(2)}) must equal total amount (₹${total.toFixed(2)}).`
+            `Allocated amounts (₹${sum.toFixed(2)}) must equal total amount (₹${total.toFixed(2)}).`,
           );
         }
       } else if (splitMode === "percentage") {
@@ -261,9 +254,7 @@ export function AddExpenseDialog({
           totalPct += Number(customPercentages[uid]) || 0;
         });
         if (Math.abs(totalPct - 100) > 0.05) {
-          throw new Error(
-            `Total percentage (${totalPct.toFixed(1)}%) must equal 100%.`
-          );
+          throw new Error(`Total percentage (${totalPct.toFixed(1)}%) must equal 100%.`);
         }
 
         const totalCents = Math.round(total * 100);
@@ -312,11 +303,10 @@ export function AddExpenseDialog({
       setOpen(false);
       resetForm();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
   });
 
-  const isLoadingMembers =
-    !fixedMembers && !!activeGroupId && membersQuery.isLoading;
+  const isLoadingMembers = !fixedMembers && !!activeGroupId && membersQuery.isLoading;
 
   return (
     <Dialog
@@ -327,12 +317,12 @@ export function AddExpenseDialog({
       }}
     >
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="p-0 gap-0">
+        <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
           <DialogTitle>{mode === "edit" ? "Edit expense" : "Add an expense"}</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="space-y-4 p-6 flex-1 overflow-y-auto"
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();
@@ -384,9 +374,7 @@ export function AddExpenseDialog({
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
             </div>
           ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No members in this group yet.
-            </p>
+            <p className="text-sm text-muted-foreground">No members in this group yet.</p>
           ) : (
             <>
               <div className="space-y-1.5">
@@ -473,7 +461,9 @@ export function AddExpenseDialog({
               {splitMode === "amount" && (
                 <div className="space-y-2 pt-1 transition-all duration-200">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground font-medium">Member amounts & notes</span>
+                    <span className="text-muted-foreground font-medium">
+                      Member amounts & notes
+                    </span>
                     <span
                       className={`font-semibold ${
                         Math.abs(amountRemaining) < 0.01
@@ -500,11 +490,18 @@ export function AddExpenseDialog({
                         const m = members.find((x) => x.id === pid);
                         const displayName = m?.name || "Member";
                         return (
-                          <div key={pid} className="space-y-1.5 rounded-xl bg-secondary/30 p-2.5 border border-border/50">
+                          <div
+                            key={pid}
+                            className="space-y-1.5 rounded-xl bg-secondary/30 p-2.5 border border-border/50"
+                          >
                             <div className="flex items-center justify-between gap-3">
-                              <span className="text-sm font-medium truncate flex-1">{displayName}</span>
+                              <span className="text-sm font-medium truncate flex-1">
+                                {displayName}
+                              </span>
                               <div className="relative w-28 shrink-0">
-                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">₹</span>
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">
+                                  ₹
+                                </span>
                                 <Input
                                   type="number"
                                   inputMode="decimal"
@@ -580,7 +577,9 @@ export function AddExpenseDialog({
                           <div key={pid} className="flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">{m?.name || "Member"}</p>
-                              <p className="text-[11px] text-muted-foreground">₹{calculatedAmt.toFixed(2)}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                ₹{calculatedAmt.toFixed(2)}
+                              </p>
                             </div>
                             <div className="relative w-24 shrink-0">
                               <Input
@@ -592,11 +591,16 @@ export function AddExpenseDialog({
                                 placeholder="0"
                                 value={customPercentages[pid] ?? ""}
                                 onChange={(e) =>
-                                  setCustomPercentages((prev) => ({ ...prev, [pid]: e.target.value }))
+                                  setCustomPercentages((prev) => ({
+                                    ...prev,
+                                    [pid]: e.target.value,
+                                  }))
                                 }
                                 className="pr-6 h-8 text-xs font-semibold"
                               />
-                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">%</span>
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">
+                                %
+                              </span>
                             </div>
                           </div>
                         );
@@ -608,16 +612,12 @@ export function AddExpenseDialog({
             </>
           )}
 
-          <DialogFooter>
+          <DialogFooter className="pt-2">
             <Button
               type="submit"
-              disabled={
-                mutation.isPending || isLoadingMembers || members.length === 0
-              }
+              disabled={mutation.isPending || isLoadingMembers || members.length === 0}
             >
-              {mutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {mode === "edit" ? "Save Changes" : "Add expense"}
             </Button>
           </DialogFooter>
@@ -648,12 +648,7 @@ export function AddExpenseFab({
       >
         <Plus className="h-7 w-7" />
       </button>
-      <AddExpenseDialog
-        userId={userId}
-        groups={groups}
-        open={open}
-        onOpenChange={setOpen}
-      />
+      <AddExpenseDialog userId={userId} groups={groups} open={open} onOpenChange={setOpen} />
     </>
   );
 }

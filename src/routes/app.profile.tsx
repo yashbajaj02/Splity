@@ -73,12 +73,8 @@ function ProfilePage() {
   if (profileQuery.isError) {
     return (
       <div className="space-y-3 py-16 text-center">
-        <h1 className="font-display text-xl font-bold">
-          Profile could not load
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {(profileQuery.error as Error).message}
-        </p>
+        <h1 className="font-display text-xl font-bold">Profile could not load</h1>
+        <p className="text-sm text-muted-foreground">{(profileQuery.error as Error).message}</p>
         <button
           type="button"
           className="inline-flex items-center justify-center rounded-md border border-input bg-background px-3 py-2 text-sm font-medium transition-colors hover:bg-accent"
@@ -102,11 +98,7 @@ function ProfilePage() {
   const initials = getInitials(displayName, profileEmail);
 
   if (!profile) {
-    return (
-      <p className="text-center text-sm text-muted-foreground">
-        Profile not found.
-      </p>
-    );
+    return <p className="text-center text-sm text-muted-foreground">Profile not found.</p>;
   }
 
   return (
@@ -130,7 +122,7 @@ function ProfilePage() {
         </Avatar>
         <h2 className="mt-4 font-display text-xl font-bold">{displayName}</h2>
         <p className="text-sm font-medium text-primary">{username}</p>
-        
+
         <div className="mt-6 grid w-full gap-2 text-sm text-muted-foreground text-left sm:grid-cols-2">
           <ProfileDetail icon={UserRound} label="Full Name" value={displayName} />
           <ProfileDetail icon={AtSign} label="Username" value={username} />
@@ -193,7 +185,10 @@ function ProfilePage() {
       <section className="pt-2">
         <AlertDialog>
           <AlertDialogTrigger asChild>
-            <Button variant="destructive" className="w-full rounded-2xl h-12 text-base font-semibold">
+            <Button
+              variant="destructive"
+              className="w-full rounded-2xl h-12 text-base font-semibold"
+            >
               <LogOut className="mr-2 h-5 w-5" /> Sign Out
             </Button>
           </AlertDialogTrigger>
@@ -224,32 +219,31 @@ function ProfilePage() {
         </AlertDialog>
       </section>
 
-      <ChangePasswordDialog
-        open={passwordDialogOpen}
-        onOpenChange={setPasswordDialogOpen}
-      />
+      <ChangePasswordDialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen} />
       <Dialog open={profileDialogOpen} onOpenChange={setProfileDialogOpen}>
-        <DialogContent className="max-w-md border-border bg-card p-4 sm:p-6 shadow-xl">
-          <DialogHeader>
+        <DialogContent className="max-w-md border-border bg-card p-0 gap-0 shadow-xl sm:mx-0">
+          <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
             <DialogTitle className="font-display text-xl">Edit Profile</DialogTitle>
             <DialogDescription>
               Update your profile details. Your email is shown for reference.
             </DialogDescription>
           </DialogHeader>
-          <ProfileForm
-            userId={userId}
-            email={profileEmail}
-            existing={profile}
-            showAvatar
-            showEmailField
-            hideSignedInText
-            submitLabel="Save Changes"
-            onCancel={() => setProfileDialogOpen(false)}
-            onDone={() => {
-              queryClient.invalidateQueries({ queryKey: ["profile", userId] });
-              setProfileDialogOpen(false);
-            }}
-          />
+          <div className="p-6 flex-1 overflow-y-auto">
+            <ProfileForm
+              userId={userId}
+              email={profileEmail}
+              existing={profile}
+              showAvatar
+              showEmailField
+              hideSignedInText
+              submitLabel="Save Changes"
+              onCancel={() => setProfileDialogOpen(false)}
+              onDone={() => {
+                queryClient.invalidateQueries({ queryKey: ["profile", userId] });
+                setProfileDialogOpen(false);
+              }}
+            />
+          </div>
         </DialogContent>
       </Dialog>
     </div>

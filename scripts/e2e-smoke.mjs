@@ -29,8 +29,7 @@ function loadEnv() {
 
 const env = loadEnv();
 const url = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
-const key =
-  env.VITE_SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_PUBLISHABLE_KEY;
+const key = env.VITE_SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_PUBLISHABLE_KEY;
 
 if (!url || !key) {
   console.error("Missing Supabase URL / publishable key in .env");
@@ -55,9 +54,7 @@ function client() {
 }
 
 async function mailinatorInbox(local) {
-  const res = await fetch(
-    `https://www.mailinator.com/api/v2/domains/public/inboxes/${local}`,
-  );
+  const res = await fetch(`https://www.mailinator.com/api/v2/domains/public/inboxes/${local}`);
   if (!res.ok) throw new Error(`mailinator inbox ${res.status}`);
   return res.json();
 }
@@ -77,9 +74,7 @@ function extractConfirmLink(raw) {
     .replace(/\\u0026/g, "&")
     .replace(/\\\//g, "/");
   const matches = [
-    ...decoded.matchAll(
-      /https:\/\/[a-z0-9.-]+\.supabase\.co\/auth\/v1\/verify\?[^\s"'<>\\]+/gi,
-    ),
+    ...decoded.matchAll(/https:\/\/[a-z0-9.-]+\.supabase\.co\/auth\/v1\/verify\?[^\s"'<>\\]+/gi),
   ];
   if (!matches.length) return null;
   return matches[0][0].replace(/[),.;]+$/, "");
@@ -385,16 +380,12 @@ async function main() {
 
     const users = [];
     for (const account of accountDefs) {
-      const u = await step(`Sign up/login ${account.email}`, () =>
-        signupAndConfirm(account),
-      );
+      const u = await step(`Sign up/login ${account.email}`, () => signupAndConfirm(account));
       // Keep username stable across cache reuse if already set
       if (!account.username) {
         account.username = `user_${u.userId.slice(0, 8)}`;
       }
-      await step(`Profile @${account.username}`, () =>
-        upsertProfile(u.sb, u.userId, account),
-      );
+      await step(`Profile @${account.username}`, () => upsertProfile(u.sb, u.userId, account));
       users.push({ ...u, account });
     }
 
@@ -452,12 +443,8 @@ async function main() {
       }),
     );
 
-    await step("Bob accepts invite", () =>
-      acceptInvite(bobSession.sb, bob.userId, group.id),
-    );
-    await step("Cara accepts invite", () =>
-      acceptInvite(caraSession.sb, cara.userId, group.id),
-    );
+    await step("Bob accepts invite", () => acceptInvite(bobSession.sb, bob.userId, group.id));
+    await step("Cara accepts invite", () => acceptInvite(caraSession.sb, cara.userId, group.id));
 
     const { data: members, error: mErr } = await alice.sb
       .from("group_members")
@@ -499,10 +486,7 @@ async function main() {
       }),
     );
 
-    const { data: expenses } = await alice.sb
-      .from("expenses")
-      .select("*")
-      .eq("group_id", group.id);
+    const { data: expenses } = await alice.sb.from("expenses").select("*").eq("group_id", group.id);
     const ids = (expenses ?? []).map((e) => e.id);
     const { data: splits } = await alice.sb
       .from("expense_splits")
@@ -511,18 +495,9 @@ async function main() {
 
     const balances = computeNet(expenses ?? [], splits ?? []);
     await step("Balances match expected nets", async () => {
-      assert(
-        balances[alice.userId] === 1700,
-        `Alice expected 1700 got ${balances[alice.userId]}`,
-      );
-      assert(
-        balances[bob.userId] === -400,
-        `Bob expected -400 got ${balances[bob.userId]}`,
-      );
-      assert(
-        balances[cara.userId] === -1300,
-        `Cara expected -1300 got ${balances[cara.userId]}`,
-      );
+      assert(balances[alice.userId] === 1700, `Alice expected 1700 got ${balances[alice.userId]}`);
+      assert(balances[bob.userId] === -400, `Bob expected -400 got ${balances[bob.userId]}`);
+      assert(balances[cara.userId] === -1300, `Cara expected -1300 got ${balances[cara.userId]}`);
     });
 
     await step("Bob sends settlement request to Alice", () =>
@@ -555,19 +530,13 @@ async function main() {
       .eq("status", "pending");
 
     await step("Alice sees pending settlement requests (≥2)", async () => {
-      assert(
-        (aliceNotifs ?? []).length >= 2,
-        `expected ≥2, got ${(aliceNotifs ?? []).length}`,
-      );
+      assert((aliceNotifs ?? []).length >= 2, `expected ≥2, got ${(aliceNotifs ?? []).length}`);
     });
 
     const upi = `upi://pay?pa=${encodeURIComponent(alice.account.upi_id)}&am=400.00&cu=INR`;
     await step("UPI payment link builds", async () => {
       assert(upi.startsWith("upi://pay?"), "bad upi");
-      assert(
-        upi.includes(`pa=${encodeURIComponent(alice.account.upi_id)}`),
-        "missing payee",
-      );
+      assert(upi.includes(`pa=${encodeURIComponent(alice.account.upi_id)}`), "missing payee");
       assert(upi.includes("am=400.00"), "missing amount");
     });
 

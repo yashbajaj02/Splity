@@ -1,3 +1,4 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -37,7 +38,7 @@ function SettlePage() {
       toast.success("Reminder sent!");
       queryClient.invalidateQueries({ queryKey: ["settle", userId] });
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
   });
 
   const totalOwe = useMemo(

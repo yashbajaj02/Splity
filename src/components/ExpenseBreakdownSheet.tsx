@@ -8,12 +8,7 @@ import {
   DrawerTitle,
   DrawerFooter,
 } from "@/components/ui/drawer";
-import {
-  getMyGroups,
-  getGroupExpenses,
-  getSplitsForGroup,
-  getProfilesByIds,
-} from "@/lib/api";
+import { getMyGroups, getGroupExpenses, getSplitsForGroup, getProfilesByIds } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 
@@ -112,14 +107,12 @@ export function ExpenseBreakdownSheet({
     enabled: open,
     queryFn: async () => {
       const groups = await getMyGroups(currentUserId);
-      const expenseArrays = await Promise.all(
-        groups.map((g) => getGroupExpenses(g.id)),
-      );
+      const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
       const allExpenses: Expense[] = expenseArrays.flat();
-      
+
       const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
       const splits = splitsArrays.flat();
-      
+
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
       for (const s of splits) {
         (splitsByExpense[s.expense_id] ??= []).push(s);
@@ -130,8 +123,7 @@ export function ExpenseBreakdownSheet({
     },
   });
 
-  const { allExpenses = [], splitsByExpense = {}, profileMap = new Map() } =
-    data ?? {};
+  const { allExpenses = [], splitsByExpense = {}, profileMap = new Map() } = data ?? {};
 
   // 1. Filter expenses that involve BOTH currentUserId and counterpartyId
   const relevantExpenses = allExpenses.filter((expense) => {
@@ -290,25 +282,17 @@ export function ExpenseBreakdownSheet({
         <DrawerFooter className="border-t border-border/50 px-6 py-4 bg-card/40">
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
-              <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                Expenses
-              </p>
-              <p className="text-base font-bold font-display mt-0.5">
-                {filteredExpenses.length}
-              </p>
+              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Expenses</p>
+              <p className="text-base font-bold font-display mt-0.5">{filteredExpenses.length}</p>
             </div>
             <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
               <p className="text-[10px] font-semibold uppercase text-muted-foreground">
                 Total Shared
               </p>
-              <p className="text-base font-bold font-display mt-0.5">
-                ₹{totalShared.toFixed(2)}
-              </p>
+              <p className="text-base font-bold font-display mt-0.5">₹{totalShared.toFixed(2)}</p>
             </div>
             <div className="bg-primary/10 p-2.5 rounded-xl border border-primary/20">
-              <p className="text-[10px] font-semibold uppercase text-primary">
-                Remaining
-              </p>
+              <p className="text-[10px] font-semibold uppercase text-primary">Remaining</p>
               <p className="text-base font-bold font-display text-primary mt-0.5">
                 ₹{balanceAmount.toFixed(2)}
               </p>

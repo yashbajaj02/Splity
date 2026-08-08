@@ -24,7 +24,7 @@ export function useSettleBalances(userId: string) {
       const groups = await getMyGroups(userId);
       const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
       const allExpenses: Expense[] = expenseArrays.flat();
-      
+
       const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
       const splits = splitsArrays.flat();
 

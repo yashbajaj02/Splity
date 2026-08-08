@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { updateProfile, findUserByUsername } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import type { Profile } from "@/lib/app-types";
-import { getInitials } from "@/lib/utils";
+import { getInitials, getCleanErrorMessage } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,9 +42,7 @@ export function ProfileForm({
       const cleanFullName = fullName.trim();
       const cleanUpiId = upiId.trim();
       if (!/^[a-z0-9_]{3,20}$/.test(cleanUsername)) {
-        throw new Error(
-          "Username must be 3–20 chars: letters, numbers, underscores.",
-        );
+        throw new Error("Username must be 3–20 chars: letters, numbers, underscores.");
       }
       if (!cleanUpiId.includes("@")) {
         throw new Error("Enter a valid UPI ID (e.g. name@bank).");
@@ -76,7 +74,7 @@ export function ProfileForm({
       toast.success("Profile updated!");
       onDone();
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
   });
 
   return (
@@ -154,16 +152,12 @@ export function ProfileForm({
           </Button>
         )}
         <Button type="submit" className="w-full sm:w-auto" disabled={mutation.isPending}>
-          {mutation.isPending && (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          )}
+          {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {submitLabel}
         </Button>
       </div>
       {!hideSignedInText && (
-        <p className="text-center text-xs text-muted-foreground">
-          Signed in as {email}
-        </p>
+        <p className="text-center text-xs text-muted-foreground">Signed in as {email}</p>
       )}
     </form>
   );

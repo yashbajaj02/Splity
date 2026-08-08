@@ -1,7 +1,24 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarDays, Clock, HandCoins, Loader2, LogOut, Pencil, Receipt, Search, Trash2, UserPlus, Users, ChevronDown, ChevronRight, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CalendarDays,
+  Clock,
+  HandCoins,
+  Loader2,
+  LogOut,
+  Pencil,
+  Receipt,
+  Search,
+  Trash2,
+  UserPlus,
+  Users,
+  ChevronDown,
+  ChevronRight,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -21,7 +38,9 @@ import {
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
 import { supabase } from "@/lib/supabase";
-const AddExpenseDialog = lazy(() => import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog })));
+const AddExpenseDialog = lazy(() =>
+  import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog })),
+);
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { QrPayDialog } from "@/components/QrPayDialog";
 import { PaidDialog } from "@/components/PaidDialog";
@@ -79,12 +98,14 @@ function GroupDetail() {
       return { fromDate: t, toDate: t };
     }
     if (datePreset === "yesterday") {
-      const y = new Date(today); y.setDate(y.getDate() - 1);
+      const y = new Date(today);
+      y.setDate(y.getDate() - 1);
       const yStr = fmt(y);
       return { fromDate: yStr, toDate: yStr };
     }
     if (datePreset === "last7") {
-      const d = new Date(today); d.setDate(d.getDate() - 6);
+      const d = new Date(today);
+      d.setDate(d.getDate() - 6);
       return { fromDate: fmt(d), toDate: fmt(today) };
     }
     if (datePreset === "thisMonth") {
@@ -120,7 +141,8 @@ function GroupDetail() {
   });
 
   const profileMap = useMemo(
-    () => new Map<string, Profile>((profilesQuery.data ?? []).map((profile) => [profile.id, profile])),
+    () =>
+      new Map<string, Profile>((profilesQuery.data ?? []).map((profile) => [profile.id, profile])),
     [profilesQuery.data],
   );
 
@@ -136,7 +158,8 @@ function GroupDetail() {
     const profile = profileMap.get(id);
     if (id === userId) return `You${profile?.username ? ` (@${profile.username})` : ""}`;
     if (profile) {
-      if (profile.full_name && profile.username) return `${profile.full_name} (@${profile.username})`;
+      if (profile.full_name && profile.username)
+        return `${profile.full_name} (@${profile.username})`;
       if (profile.full_name) return profile.full_name;
       if (profile.username) return `@${profile.username}`;
     }
@@ -184,7 +207,7 @@ function GroupDetail() {
       queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
       navigate({ to: "/app" });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
 
   const deleteMutation = useMutation({
@@ -194,7 +217,7 @@ function GroupDetail() {
       queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
       navigate({ to: "/app" });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
 
   const removeExpenseMutation = useMutation({
@@ -205,7 +228,7 @@ function GroupDetail() {
       queryClient.invalidateQueries({ queryKey: ["group-splits", groupId] });
       queryClient.invalidateQueries({ queryKey: ["settle", userId] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
 
   const group = groupQuery.data ?? null;
@@ -214,6 +237,11 @@ function GroupDetail() {
   const pendingMembers = members.filter((member) => member.status === "pending");
   const expenses = expensesQuery.data ?? [];
   const filteredExpenses = expenses.filter((expense) => {
+    const { cleanDescription } = parseExpenseDescription(expense.description);
+    const descLower = cleanDescription.toLowerCase();
+    const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+    if (isSettlement) return false;
+
     const expenseDate = expense.created_at.slice(0, 10);
     if (fromDate && expenseDate < fromDate) return false;
     if (toDate && expenseDate > toDate) return false;
@@ -341,7 +369,9 @@ function GroupDetail() {
             >
               <span className="flex items-center gap-2 font-display text-sm font-semibold truncate">
                 <Users className="h-4 w-4 text-primary shrink-0" />
-                <span className="truncate">Members ({acceptedMembers.length + pendingMembers.length})</span>
+                <span className="truncate">
+                  Members ({acceptedMembers.length + pendingMembers.length})
+                </span>
               </span>
               <ChevronDown
                 className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 ${
@@ -413,12 +443,15 @@ function GroupDetail() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-foreground truncate">
-                              {displayName} {isYou && <span className="text-xs text-muted-foreground font-normal">(You)</span>}
+                              {displayName}{" "}
+                              {isYou && (
+                                <span className="text-xs text-muted-foreground font-normal">
+                                  (You)
+                                </span>
+                              )}
                             </p>
                             {username && (
-                              <p className="text-xs text-muted-foreground truncate">
-                                @{username}
-                              </p>
+                              <p className="text-xs text-muted-foreground truncate">@{username}</p>
                             )}
                           </div>
                           {isOwner && (
@@ -437,7 +470,9 @@ function GroupDetail() {
                     const initials = displayName.slice(0, 2).toUpperCase();
                     return (
                       <div key={member.id}>
-                        {(filteredAcceptedMembers.length > 0 || index > 0) && <div className="h-px bg-border/40 my-1" />}
+                        {(filteredAcceptedMembers.length > 0 || index > 0) && (
+                          <div className="h-px bg-border/40 my-1" />
+                        )}
                         <div className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/40 transition-colors opacity-75">
                           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-bold text-xs uppercase">
                             {initials}
@@ -447,9 +482,7 @@ function GroupDetail() {
                               {displayName}
                             </p>
                             {username && (
-                              <p className="text-xs text-muted-foreground truncate">
-                                @{username}
-                              </p>
+                              <p className="text-xs text-muted-foreground truncate">@{username}</p>
                             )}
                           </div>
                           <span className="text-[11px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1">
@@ -572,7 +605,13 @@ function GroupDetail() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-sm font-semibold text-muted-foreground">Expenses</h2>
-          <Suspense fallback={<Button size="sm" disabled>Loading...</Button>}>
+          <Suspense
+            fallback={
+              <Button size="sm" disabled>
+                Loading...
+              </Button>
+            }
+          >
             <AddExpenseDialog
               groupId={groupId}
               userId={userId}
@@ -733,7 +772,9 @@ function DateRangeFilter({
       {preset === "custom" && (
         <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-border bg-card">
           <div className="space-y-1.5">
-            <label htmlFor="custom-from-date" className="text-xs font-medium text-muted-foreground">From</label>
+            <label htmlFor="custom-from-date" className="text-xs font-medium text-muted-foreground">
+              From
+            </label>
             <Input
               id="custom-from-date"
               type="date"
@@ -744,7 +785,9 @@ function DateRangeFilter({
             />
           </div>
           <div className="space-y-1.5">
-            <label htmlFor="custom-to-date" className="text-xs font-medium text-muted-foreground">To</label>
+            <label htmlFor="custom-to-date" className="text-xs font-medium text-muted-foreground">
+              To
+            </label>
             <Input
               id="custom-to-date"
               type="date"
@@ -820,17 +863,15 @@ const PendingSettlementDropdownRow = memo(function PendingSettlementDropdownRow(
             </span>
           </div>
           {counterpartyUsername ? (
-            <p className="text-xs text-muted-foreground truncate">
-              @{counterpartyUsername}
-            </p>
+            <p className="text-xs text-muted-foreground truncate">@{counterpartyUsername}</p>
           ) : (
-            <p className="text-xs text-muted-foreground">
-              {isYouOwe ? "You owe" : "Owes you"}
-            </p>
+            <p className="text-xs text-muted-foreground">{isYouOwe ? "You owe" : "Owes you"}</p>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span className={`text-sm font-display font-bold ${isYouOwe ? "text-destructive" : "text-primary"}`}>
+          <span
+            className={`text-sm font-display font-bold ${isYouOwe ? "text-destructive" : "text-primary"}`}
+          >
             ₹{debt.amount.toFixed(2)}
           </span>
           <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -877,8 +918,9 @@ const DebtRow = memo(function DebtRow({
         ? "text-primary"
         : "text-muted-foreground";
 
-  const [selectedExpenses, setSelectedExpenses] = useState<Record<string, number> | undefined>(undefined);
-  
+  const [selectedExpenses, setSelectedExpenses] = useState<Record<string, number> | undefined>(
+    undefined,
+  );
 
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -1023,9 +1065,7 @@ const ExpenseRow = memo(function ExpenseRow({
             <p className="font-display font-bold text-foreground">
               <CountUpCurrency amount={Number(expense.amount)} />
             </p>
-            {isSettlement ? (
-              <p className="text-xs text-muted-foreground">{paymentMethod}</p>
-            ) : null}
+            {isSettlement ? <p className="text-xs text-muted-foreground">{paymentMethod}</p> : null}
           </div>
           {canShowActions ? (
             <div
@@ -1206,7 +1246,7 @@ function InviteDialog({
       setOpen(false);
       setUsername("");
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
 
   return (
@@ -1216,12 +1256,12 @@ function InviteDialog({
           <UserPlus className="mr-1 h-4 w-4" /> Invite
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
+      <DialogContent className="p-0 gap-0">
+        <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
           <DialogTitle>Invite by username</DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4"
+          className="space-y-4 p-6 flex-1 overflow-y-auto"
           onSubmit={(event) => {
             event.preventDefault();
             if (!username.trim()) return;
@@ -1238,7 +1278,7 @@ function InviteDialog({
               required
             />
           </div>
-          <DialogFooter>
+          <DialogFooter className="pt-2">
             <Button type="submit" disabled={mutation.isPending}>
               {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Send invite

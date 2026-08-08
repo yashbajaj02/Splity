@@ -1,3 +1,4 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Loader2, MailCheck } from "lucide-react";
@@ -54,7 +55,7 @@ function AuthPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setBusy(false);
     if (error) {
-      toast.error(error.message);
+      toast.error(getCleanErrorMessage(error));
       return;
     }
     toast.success("Welcome back!");
@@ -75,7 +76,7 @@ function AuthPage() {
     });
     setBusy(false);
     if (error) {
-      toast.error(error.message);
+      toast.error(getCleanErrorMessage(error));
       return;
     }
     // If email confirmation is required, session will be null.
@@ -109,20 +110,16 @@ function AuthPage() {
   if (emailSent) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5">
-        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
+        <div className="w-[calc(100vw-2rem)] sm:w-full max-w-sm rounded-2xl border border-border bg-card p-8 text-center shadow-sm">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
             <MailCheck className="h-6 w-6" />
           </div>
           <h1 className="mt-4 font-display text-xl font-bold">Check your inbox</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            We sent a confirmation link to <strong>{email}</strong>. Click it to
-            verify your account, then come back and sign in.
+            We sent a confirmation link to <strong>{email}</strong>. Click it to verify your
+            account, then come back and sign in.
           </p>
-          <Button
-            variant="outline"
-            className="mt-6 w-full"
-            onClick={() => setEmailSent(false)}
-          >
+          <Button variant="outline" className="mt-6 w-full" onClick={() => setEmailSent(false)}>
             Back to sign in
           </Button>
         </div>
@@ -132,7 +129,7 @@ function AuthPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5 py-10">
-      <div className="w-full max-w-sm">
+      <div className="w-[calc(100vw-2rem)] sm:w-full max-w-sm">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2">
           <AppLogo className="h-9 w-9" />
           <span className="font-display text-lg font-bold">Splity</span>
@@ -208,15 +205,15 @@ function AuthPage() {
       </div>
 
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-6 shadow-xl sm:mx-0">
-          <DialogHeader>
+        <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-0 gap-0 shadow-xl sm:mx-0">
+          <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
             <DialogTitle className="font-display text-xl">Reset your password</DialogTitle>
             <DialogDescription>
               Enter your email address and we'll send you a password reset link.
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleResetRequest} className="space-y-4">
+          <form onSubmit={handleResetRequest} className="space-y-4 p-6 flex-1 overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="reset-email">Email Address</Label>
               <Input
@@ -230,7 +227,7 @@ function AuthPage() {
               />
             </div>
 
-            <DialogFooter className="gap-2 sm:gap-0">
+            <DialogFooter className="gap-2 sm:gap-0 pt-2">
               <Button
                 type="button"
                 variant="outline"

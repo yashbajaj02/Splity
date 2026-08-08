@@ -24,32 +24,33 @@ export function useSupabaseRealtime(userId: string | undefined) {
         { event: "*", schema: "public", table: "group_members", filter: `user_id=eq.${userId}` },
         () => {
           queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-        }
+        },
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "notifications", filter: `recipient_id=eq.${userId}` },
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `recipient_id=eq.${userId}`,
+        },
         () => {
           queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
-        }
+        },
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "notifications", filter: `sender_id=eq.${userId}` },
         () => {
           queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
-        }
+        },
       )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "expense_splits" },
-        () => {
-          queryClient.invalidateQueries({ queryKey: ["group-splits"] });
-          queryClient.invalidateQueries({ queryKey: ["settle", userId] });
-          queryClient.invalidateQueries({ queryKey: ["expense-breakdown"] });
-          queryClient.invalidateQueries({ queryKey: ["qr-expense-breakdown"] });
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "expense_splits" }, () => {
+        queryClient.invalidateQueries({ queryKey: ["group-splits"] });
+        queryClient.invalidateQueries({ queryKey: ["settle", userId] });
+        queryClient.invalidateQueries({ queryKey: ["expense-breakdown"] });
+        queryClient.invalidateQueries({ queryKey: ["qr-expense-breakdown"] });
+      })
       .subscribe();
 
     channels.push(globalChannel);
@@ -67,14 +68,19 @@ export function useSupabaseRealtime(userId: string | undefined) {
               queryClient.invalidateQueries({ queryKey: ["settle", userId] });
               queryClient.invalidateQueries({ queryKey: ["expense-breakdown"] });
               queryClient.invalidateQueries({ queryKey: ["qr-expense-breakdown"] });
-            }
+            },
           )
           .on(
             "postgres_changes",
-            { event: "*", schema: "public", table: "group_members", filter: `group_id=eq.${group.id}` },
+            {
+              event: "*",
+              schema: "public",
+              table: "group_members",
+              filter: `group_id=eq.${group.id}`,
+            },
             () => {
               queryClient.invalidateQueries({ queryKey: ["group-members", group.id] });
-            }
+            },
           )
           .subscribe();
         channels.push(groupChannel);

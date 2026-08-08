@@ -1,10 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 
@@ -22,17 +16,14 @@ const PASSWORD_RECOVERY_KEY = "splity-password-recovery";
 
 function isBrowserPasswordRecovery() {
   return (
-    typeof window !== "undefined" &&
-    window.sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === "true"
+    typeof window !== "undefined" && window.sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === "true"
   );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isPasswordRecovery, setIsPasswordRecovery] = useState(
-    isBrowserPasswordRecovery,
-  );
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(isBrowserPasswordRecovery);
 
   useEffect(() => {
     const setRecoveryMode = (enabled: boolean) => {

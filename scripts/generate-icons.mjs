@@ -91,9 +91,7 @@ async function trimWhiteBorder(inputPath) {
   const leftSq = Math.round(cx - side / 2);
   const topSq = Math.round(cy - side / 2);
 
-  console.log(
-    `Trim: ${width}x${height} → ${side}x${side} (removed white/empty edge)`,
-  );
+  console.log(`Trim: ${width}x${height} → ${side}x${side} (removed white/empty edge)`);
 
   return sharp(inputPath)
     .extract({
@@ -141,10 +139,7 @@ async function main() {
 
   // Maskable: full-bleed dark green + slightly inset artwork (safe zone)
   const maskBg = { r: 15, g: 90, b: 50 }; // deep green matching art
-  const inset = await sharp(masterBuf)
-    .resize(410, 410, { fit: "cover" })
-    .png()
-    .toBuffer();
+  const inset = await sharp(masterBuf).resize(410, 410, { fit: "cover" }).png().toBuffer();
   await sharp({
     create: {
       width: 512,
@@ -160,28 +155,17 @@ async function main() {
 
   // Transparent mark: keep art but knock out near-edge if needed — export as PNG with alpha via rounded mask optional
   // For “transparent logo”, remove outer rounded-squircle by keeping only content — use master as-is with no extra white canvas
-  await sharp(masterBuf)
-    .resize(512, 512)
-    .png()
-    .toFile(resolve(pub, "logo-transparent.png"));
+  await sharp(masterBuf).resize(512, 512).png().toFile(resolve(pub, "logo-transparent.png"));
   console.log("✓ logo-transparent.png");
 
   // Light / dark theme wordmark cards (icon only square + text via SVG composite later)
-  await sharp(masterBuf)
-    .resize(512, 512)
-    .png()
-    .toFile(resolve(pub, "logo-light.png"));
-  await sharp(masterBuf)
-    .resize(512, 512)
-    .png()
-    .toFile(resolve(pub, "logo-dark.png"));
+  await sharp(masterBuf).resize(512, 512).png().toFile(resolve(pub, "logo-light.png"));
+  await sharp(masterBuf).resize(512, 512).png().toFile(resolve(pub, "logo-dark.png"));
   console.log("✓ logo-light.png / logo-dark.png");
 
   // favicon.ico
   const icoParts = await Promise.all(
-    [16, 32, 48].map((s) =>
-      sharp(masterBuf).resize(s, s).png().toBuffer(),
-    ),
+    [16, 32, 48].map((s) => sharp(masterBuf).resize(s, s).png().toBuffer()),
   );
   writeFileSync(resolve(pub, "favicon.ico"), await toIco(icoParts));
   console.log("✓ favicon.ico");

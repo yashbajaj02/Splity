@@ -15,7 +15,7 @@ export function Onboarding({
 }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-app-gradient px-5 py-10">
-      <div className="w-full max-w-sm">
+      <div className="w-[calc(100vw-2rem)] sm:w-full max-w-sm">
         <div className="mb-6 flex items-center justify-center gap-2">
           <AppLogo className="h-9 w-9" />
           <span className="font-display text-lg font-bold">Splity</span>
@@ -24,8 +24,8 @@ export function Onboarding({
         <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
           <h1 className="font-display text-xl font-bold">Set up your profile</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Pick a unique username so friends can find you, and add your UPI ID
-            so people can pay you back.
+            Pick a unique username so friends can find you, and add your UPI ID so people can pay
+            you back.
           </p>
 
           <div className="mt-6">

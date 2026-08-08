@@ -1,3 +1,4 @@
+import { getCleanErrorMessage } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -48,8 +49,7 @@ export function ChangePasswordDialog({
     return "";
   }, [confirmPassword, confirmTouched, newPassword]);
 
-  const isValid =
-    newPassword.length >= MIN_PASSWORD_LENGTH && newPassword === confirmPassword;
+  const isValid = newPassword.length >= MIN_PASSWORD_LENGTH && newPassword === confirmPassword;
 
   const resetForm = () => {
     setCurrentPassword("");
@@ -80,7 +80,7 @@ export function ChangePasswordDialog({
     setBusy(false);
 
     if (error) {
-      toast.error(error.message);
+      toast.error(getCleanErrorMessage(error));
       return;
     }
 
@@ -94,31 +94,25 @@ export function ChangePasswordDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-6 shadow-xl sm:mx-0">
+      <DialogContent className="mx-4 max-w-md rounded-2xl border-border bg-card p-0 gap-0 shadow-xl sm:mx-0">
         {success ? (
           <div className="py-7 text-center">
             <div className="mx-auto flex h-16 w-16 animate-in zoom-in-50 duration-300 items-center justify-center rounded-full bg-secondary text-primary">
               <CheckCircle2 className="h-8 w-8" />
             </div>
-            <h2 className="mt-4 font-display text-xl font-bold">
-              Password updated successfully.
-            </h2>
+            <h2 className="mt-4 font-display text-xl font-bold">Password updated successfully.</h2>
           </div>
         ) : (
           <>
-            <DialogHeader>
+            <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-secondary text-primary sm:mx-0">
                 <KeyRound className="h-5 w-5" />
               </div>
-              <DialogTitle className="font-display text-xl">
-                Change Password
-              </DialogTitle>
-              <DialogDescription>
-                Update the password for your signed-in account.
-              </DialogDescription>
+              <DialogTitle className="font-display text-xl">Change Password</DialogTitle>
+              <DialogDescription>Update the password for your signed-in account.</DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4 p-6 flex-1 overflow-y-auto">
               <PasswordInput
                 id="current-password"
                 label="Current Password (optional)"
@@ -153,7 +147,7 @@ export function ChangePasswordDialog({
                 required
               />
 
-              <DialogFooter className="gap-2 sm:gap-0">
+              <DialogFooter className="gap-2 sm:gap-0 pt-2">
                 <Button
                   type="button"
                   variant="outline"
