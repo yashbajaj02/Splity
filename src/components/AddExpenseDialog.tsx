@@ -519,15 +519,23 @@ export function AddExpenseDialog({
                                 />
                               </div>
                             </div>
-                            <Input
-                              type="text"
-                              placeholder={`Optional note for ${displayName}...`}
-                              value={customNotes[pid] ?? ""}
-                              onChange={(e) =>
-                                setCustomNotes((prev) => ({ ...prev, [pid]: e.target.value }))
-                              }
-                              className="h-7 text-xs bg-background/90 placeholder:text-muted-foreground/70"
-                            />
+                            <div className="relative">
+                              <Input
+                                type="text"
+                                placeholder={`Optional note for ${displayName}...`}
+                                value={customNotes[pid] ?? ""}
+                                onChange={(e) =>
+                                  setCustomNotes((prev) => ({ ...prev, [pid]: e.target.value }))
+                                }
+                                maxLength={200}
+                                className="h-7 text-xs bg-background/90 placeholder:text-muted-foreground/70 pr-12"
+                              />
+                              {(customNotes[pid]?.length ?? 0) > 0 && (
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-muted-foreground bg-background px-1">
+                                  {customNotes[pid]?.length ?? 0}/200
+                                </span>
+                              )}
+                            </div>
                           </div>
                         );
                       })

@@ -160,6 +160,8 @@ export function ActivityDetailsSheet({
     const payerProfile = profilesById[exp.paid_by];
     const payerName = payerProfile?.full_name || payerProfile?.username?.replace(/^@/, "") || "Someone";
 
+    const canViewAllNotes = exp.created_by === currentUserId;
+
     const memberSplits = splits.map((s) => {
       const p = profilesById[s.user_id];
       let name = s.user_id === currentUserId ? "You" : "Member";
@@ -167,7 +169,8 @@ export function ActivityDetailsSheet({
         if (p?.full_name?.trim()) name = p.full_name.trim();
         else if (p?.username?.trim()) name = p.username.trim().replace(/^@/, "");
       }
-      const note = s.note || splitNotes[s.user_id] || null;
+      const canViewNote = canViewAllNotes || s.user_id === currentUserId;
+      const note = canViewNote ? (s.note || splitNotes[s.user_id] || null) : null;
       return {
         userId: s.user_id,
         name,

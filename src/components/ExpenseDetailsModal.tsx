@@ -9,8 +9,10 @@ import {
   Receipt,
   Users,
   X,
+  MessageSquareText,
 } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogPortal,
@@ -346,6 +348,12 @@ export function ExpenseDetailsModal({
                   </div>
                 ) : (
                   <div className="divide-y divide-border/40 rounded-xl border border-border/60 bg-card overflow-hidden">
+                    {/* Header for desktop only */}
+                    <div className="hidden sm:grid sm:grid-cols-3 sm:gap-4 p-3.5 bg-secondary/20 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <div>Name</div>
+                      <div>Amount</div>
+                      <div>Note</div>
+                    </div>
                     {splits.map((split) => {
                       const memberProfile = profileMap.get(split.user_id);
                       const isMe = split.user_id === currentUserId;
@@ -360,11 +368,14 @@ export function ExpenseDetailsModal({
                       }
 
                       const owedAmount = Number(split.amount_owed);
-                      const note = split.note || splitNotes[split.user_id] || null;
+                      const canViewAllNotes = expense.created_by === currentUserId;
+                      const canViewNote = canViewAllNotes || isMe;
+                      const note = canViewNote ? (split.note || splitNotes[split.user_id] || null) : null;
 
                       return (
-                        <div key={split.id || split.user_id} className="p-3.5 space-y-1.5">
-                          <div className="flex items-center justify-between">
+                        <div key={split.id || split.user_id} className="p-3.5">
+                          {/* Desktop Layout (3-column) */}
+                          <div className="hidden sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center">
                             <div className="flex items-center gap-3 min-w-0">
                               <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
                                 {memberName.slice(0, 2).toUpperCase()}
@@ -375,19 +386,81 @@ export function ExpenseDetailsModal({
                                 </p>
                               </div>
                             </div>
-                            <div className="text-right shrink-0">
+                            <div>
                               <p className="text-sm font-semibold font-display text-foreground">
                                 ₹{owedAmount.toFixed(2)}
                               </p>
                             </div>
+                            <div className="min-w-0">
+                              {note ? (
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1.5 rounded-full bg-secondary/50 hover:bg-secondary/80 border border-border/50 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors max-w-full"
+                                    >
+                                      <MessageSquareText className="h-3.5 w-3.5 shrink-0" />
+                                      <span className="truncate">{note}</span>
+                                    </button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[280px] p-4 text-sm" align="start">
+                                    <div className="space-y-2">
+                                      <h4 className="font-medium text-foreground text-xs uppercase tracking-wider text-muted-foreground">
+                                        Note for {memberName}
+                                      </h4>
+                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">{note}</p>
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
+                              ) : (
+                                <span className="text-sm text-muted-foreground/40 italic">-</span>
+                              )}
+                            </div>
                           </div>
 
-                          {note ? (
-                            <div className="ml-11 flex items-start gap-1.5 rounded-lg bg-secondary/50 px-2.5 py-1 text-xs text-foreground border border-border/40">
-                              <span className="font-semibold text-muted-foreground shrink-0">Note:</span>
-                              <span className="break-words font-medium">{note}</span>
+                          {/* Mobile Layout (Stacked) */}
+                          <div className="sm:hidden space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                                  {memberName.slice(0, 2).toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-medium text-sm text-foreground truncate">
+                                    {memberName} {isMe && <span className="text-xs text-primary font-normal">(You)</span>}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-sm font-semibold font-display text-foreground">
+                                  ₹{owedAmount.toFixed(2)}
+                                </p>
+                              </div>
                             </div>
-                          ) : null}
+                            {note ? (
+                              <div className="ml-11">
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-1.5 rounded-xl bg-secondary/50 hover:bg-secondary/80 border border-border/50 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors max-w-full text-left"
+                                    >
+                                      <MessageSquareText className="h-3.5 w-3.5 shrink-0" />
+                                      <span className="truncate">{note}</span>
+                                    </button>
+                                  </PopoverTrigger>
+                                  <PopoverContent className="w-[280px] p-4 text-sm" align="start">
+                                    <div className="space-y-2">
+                                      <h4 className="font-medium text-foreground text-xs uppercase tracking-wider text-muted-foreground">
+                                        Note for {memberName}
+                                      </h4>
+                                      <p className="text-muted-foreground break-words whitespace-pre-wrap">{note}</p>
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       );
                     })}

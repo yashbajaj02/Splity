@@ -11,41 +11,16 @@ import { computePairwiseDebts } from "./debt";
 
 const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
 
-export function serializeExpenseDescription(
-  cleanDescription: string,
-  splitNotes?: Record<string, string>,
-): string {
-  if (!splitNotes) return cleanDescription;
-  const filtered: Record<string, string> = {};
-  for (const [k, v] of Object.entries(splitNotes)) {
-    if (v && v.trim()) {
-      filtered[k] = v.trim();
-    }
-  }
-  if (Object.keys(filtered).length === 0) return cleanDescription;
-  return `${cleanDescription.trim()}\n<!--SPLIT_NOTES:${JSON.stringify(filtered)}-->`;
+export function getCleanExpenseDescription(rawDescription: string): string {
+  if (!rawDescription) return "";
+  return rawDescription.replace(/\n?<!--SPLIT_NOTES:.*?-->/s, "").trim();
 }
 
 export function parseExpenseDescription(rawDescription: string): {
   cleanDescription: string;
   splitNotes: Record<string, string>;
 } {
-  if (!rawDescription) return { cleanDescription: "", splitNotes: {} };
-  const match = rawDescription.match(/<!--SPLIT_NOTES:(.*?)-->/s);
-  if (match) {
-    try {
-      const splitNotes = JSON.parse(match[1]);
-      const cleanDescription = rawDescription.replace(/\n?<!--SPLIT_NOTES:.*?-->/s, "").trim();
-      return { cleanDescription, splitNotes };
-    } catch {
-      // fallback
-    }
-  }
-  return { cleanDescription: rawDescription.trim(), splitNotes: {} };
-}
-
-export function getCleanExpenseDescription(rawDescription: string): string {
-  return parseExpenseDescription(rawDescription).cleanDescription;
+  return { cleanDescription: getCleanExpenseDescription(rawDescription), splitNotes: {} };
 }
 
 export function getCleanMemberName(name: string): string {
@@ -271,7 +246,10 @@ export async function getGroupExpenses(groupId: string): Promise<Expense[]> {
     .eq("group_id", groupId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []) as Expense[];
+  return (data ?? []).map(exp => ({
+    ...exp,
+    description: getCleanExpenseDescription(exp.description)
+  })) as Expense[];
 }
 
 export async function getExpense(expenseId: string): Promise<Expense | null> {
@@ -281,7 +259,8 @@ export async function getExpense(expenseId: string): Promise<Expense | null> {
     .eq("id", expenseId)
     .maybeSingle();
   if (error) throw error;
-  return data as Expense | null;
+  if (!data) return null;
+  return { ...data, description: getCleanExpenseDescription(data.description) } as Expense;
 }
 
 export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]> {
@@ -292,12 +271,12 @@ export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]
   if (error) throw error;
   return (data ?? []).map((d: any) => {
     const { expenses, ...split } = d;
-    const notes = expenses?.description
+    const legacyNotes = expenses?.description
       ? parseExpenseDescription(expenses.description).splitNotes
       : {};
     return {
       ...split,
-      note: split.note || notes[split.user_id] || null,
+      note: split.note || legacyNotes[split.user_id] || null,
     };
   }) as ExpenseSplit[];
 }
@@ -309,22 +288,16 @@ export async function addExpense(opts: {
   amount: number;
   splits: { userId: string; amount: number; note?: string }[];
 }) {
-  const splitNotesMap: Record<string, string> = {};
-  opts.splits.forEach((s) => {
-    if (s.note?.trim()) {
-      splitNotesMap[s.userId] = s.note.trim();
-    }
-  });
-  const fullDescription = serializeExpenseDescription(opts.description, splitNotesMap);
+  const cleanDescription = getCleanExpenseDescription(opts.description);
 
-  // 1. Insert expense immediately
+  // 1. Insert expense with clean description immediately
   const { data, error } = await supabase
     .from("expenses")
     .insert({
       group_id: opts.groupId,
       created_by: opts.createdBy,
       paid_by: opts.createdBy, // always the authenticated user
-      description: fullDescription,
+      description: cleanDescription,
       amount: opts.amount,
     })
     .select("*")
@@ -332,7 +305,7 @@ export async function addExpense(opts: {
   if (error) throw error;
   const expense = data as Expense;
 
-  // 2. Insert splits immediately
+  // 2. Insert splits with person-specific notes in expense_splits table
   const rows = opts.splits.map((s) => ({
     expense_id: expense.id,
     user_id: s.userId,
@@ -340,26 +313,23 @@ export async function addExpense(opts: {
     ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
   let { error: sErr } = await supabase.from("expense_splits").insert(rows);
-  if (sErr && /note|column/i.test(sErr.message)) {
-    const fallbackRows = opts.splits.map((s) => ({
-      expense_id: expense.id,
-      user_id: s.userId,
-      amount_owed: s.amount,
-    }));
-    const res = await supabase.from("expense_splits").insert(fallbackRows);
-    sErr = res.error;
+  if (sErr) {
+    if (/note|column/i.test(sErr.message)) {
+      throw new Error(
+        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;"
+      );
+    }
+    throw sErr;
   }
-  if (sErr) throw sErr;
 
   // 3. Send notifications asynchronously without failing the expense operation
-  if (!opts.description.toLowerCase().includes("settlement")) {
+  if (!cleanDescription.toLowerCase().includes("settlement")) {
     Promise.all([
       getGroup(opts.groupId),
       getProfile(opts.createdBy),
       getGroupMembers(opts.groupId),
     ])
       .then(async ([group, creator, members]) => {
-        const cleanDesc = getCleanExpenseDescription(opts.description);
         const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
         const recipients = members
           .filter(
@@ -377,9 +347,6 @@ export async function addExpense(opts: {
           const notificationRows = recipients.map((recipientId) => {
             const recipientSplit = opts.splits.find((s) => s.userId === recipientId);
             const recipientAmount = recipientSplit ? recipientSplit.amount : opts.amount;
-            const recipientNote =
-              recipientSplit?.note?.trim() || splitNotesMap[recipientId] || "";
-            const noteSuffix = recipientNote ? ` • ${recipientNote}` : "";
 
             return {
               recipient_id: recipientId,
@@ -389,7 +356,7 @@ export async function addExpense(opts: {
               group_id: opts.groupId,
               amount: recipientAmount,
               message: buildExpenseAddedMessage({
-                description: `${cleanDesc}${noteSuffix}`,
+                description: cleanDescription,
                 groupName: group?.name ?? "your group",
                 paidByName,
               }),
@@ -469,18 +436,12 @@ export async function updateExpense(opts: {
     throw new Error("This expense can only be edited within 5 hours.");
   }
 
-  const splitNotesMap: Record<string, string> = {};
-  opts.splits.forEach((s) => {
-    if (s.note?.trim()) {
-      splitNotesMap[s.userId] = s.note.trim();
-    }
-  });
-  const fullDescription = serializeExpenseDescription(opts.description, splitNotesMap);
+  const cleanDescription = getCleanExpenseDescription(opts.description);
 
   const { data, error } = await supabase
     .from("expenses")
     .update({
-      description: fullDescription,
+      description: cleanDescription,
       amount: opts.amount,
     })
     .eq("id", opts.expenseId)
@@ -501,16 +462,14 @@ export async function updateExpense(opts: {
     ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
   let { error: sErr } = await supabase.from("expense_splits").insert(rows);
-  if (sErr && /note|column/i.test(sErr.message)) {
-    const fallbackRows = opts.splits.map((s) => ({
-      expense_id: opts.expenseId,
-      user_id: s.userId,
-      amount_owed: s.amount,
-    }));
-    const res = await supabase.from("expense_splits").insert(fallbackRows);
-    sErr = res.error;
+  if (sErr) {
+    if (/note|column/i.test(sErr.message)) {
+      throw new Error(
+        "Database schema error: 'note' column is missing in 'expense_splits' table. Please run the migration script in Supabase SQL Editor: ALTER TABLE public.expense_splits ADD COLUMN IF NOT EXISTS note TEXT;"
+      );
+    }
+    throw sErr;
   }
-  if (sErr) throw sErr;
 
   return data as Expense;
 }
@@ -680,7 +639,10 @@ export async function getNotifications(userId: string): Promise<AppNotification[
     .eq("recipient_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []) as AppNotification[];
+  return (data ?? []).map(notif => ({
+    ...notif,
+    message: notif.message ? getCleanExpenseDescription(notif.message) : notif.message
+  })) as AppNotification[];
 }
 
 export async function sendSettlementRequest(opts: {
