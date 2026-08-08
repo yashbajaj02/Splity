@@ -253,6 +253,11 @@ export function ExpenseDetailsModal({
                   </p>
                 </div>
               </div>
+
+              <DialogClose className="rounded-full p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring shrink-0 ml-4 -mt-1 -mr-1">
+                <X className="h-5 w-5" />
+                <span className="sr-only">Close</span>
+              </DialogClose>
             </div>
 
             {/* Scrollable Body */}

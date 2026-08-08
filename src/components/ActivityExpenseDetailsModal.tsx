@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Receipt, X, MessageSquareText } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Dialog, DialogPortal, DialogOverlay, DialogContent, DialogClose } from "@/components/ui/dialog";
+import { Dialog, DialogPortal, DialogOverlay, DialogContent, DialogHeader, DialogClose } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   getSplitsForGroup,
@@ -95,9 +95,9 @@ export function ActivityExpenseDetailsModal({
           )}
           aria-describedby={undefined}
         >
-          <div className="flex items-center justify-between border-b border-border/50 px-5 py-4 shrink-0">
+          <DialogHeader className="px-5 py-4 border-b border-border/50 shrink-0">
             <h2 className="font-display text-lg font-bold">Expense Activity</h2>
-          </div>
+          </DialogHeader>
 
           <div className="px-5 py-6 flex-1 overflow-y-auto">
             <div className="mb-6 flex items-center gap-3">

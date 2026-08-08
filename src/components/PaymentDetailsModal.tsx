@@ -7,6 +7,7 @@ import {
   DialogPortal,
   DialogOverlay,
   DialogContent,
+  DialogHeader,
   DialogClose,
 } from "@/components/ui/dialog";
 import { getSplitsForGroup, getProfilesByIds, parseExpenseDescription } from "@/lib/api";
@@ -92,9 +93,9 @@ export function PaymentDetailsModal({
           )}
           aria-describedby={undefined}
         >
-          <div className="flex items-center justify-between border-b border-border/50 px-5 py-4 shrink-0">
+          <DialogHeader className="px-5 py-4 border-b border-border/50 shrink-0">
             <h2 className="font-display text-lg font-bold">Payment Details</h2>
-          </div>
+          </DialogHeader>
 
           <div className="px-5 py-6 flex-1 overflow-y-auto">
             <div className="mb-6 flex items-center gap-3">
