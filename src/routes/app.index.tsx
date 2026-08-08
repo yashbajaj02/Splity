@@ -1,4 +1,4 @@
-import { getCleanErrorMessage } from "@/lib/utils";
+import { getCleanErrorMessage, getInitials } from "@/lib/utils";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -176,13 +176,6 @@ function getFirstName(name: string) {
   return trimmed.split(/\s+/)[0];
 }
 
-function getInitials(name: string, email: string) {
-  const source = name.trim() || email.trim();
-  if (!source) return "SP";
-  const parts = source.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-}
 
 function EmptyState({ userId }: { userId: string }) {
   return (

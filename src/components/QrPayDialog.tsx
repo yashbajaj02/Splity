@@ -1,7 +1,7 @@
 import { useRef, useState, useMemo } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { toast } from "sonner";
-import { Camera, Download, X } from "lucide-react";
+import { Camera, Download, ArrowLeft } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -343,7 +343,7 @@ export function QrPayDialog({
                 variant="outline"
                 onClick={() => setOpen(false)}
               >
-                <X className="h-4 w-4 mr-2" />
+                <ArrowLeft className="h-4 w-4 mr-2" />
                 Back
               </Button>
             </div>

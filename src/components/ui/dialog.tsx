@@ -51,11 +51,14 @@ DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
   <div className={cn("flex items-start justify-between shrink-0", className)} {...props}>
-    <div className="flex flex-col space-y-1.5 flex-1 min-w-0 text-center sm:text-left">
+    <div className="flex flex-col space-y-1.5 flex-1 min-w-0 text-left">
       {children}
     </div>
-    <DialogPrimitive.Close className="rounded-full p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring shrink-0 ml-4 -mt-1 -mr-1">
-      <X className="h-5 w-5" />
+    <DialogPrimitive.Close
+      aria-label="Close"
+      className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full border border-border/80 bg-background/90 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-ring shrink-0 ml-4 shadow-xs"
+    >
+      <X className="h-4 w-4" />
       <span className="sr-only">Close</span>
     </DialogPrimitive.Close>
   </div>

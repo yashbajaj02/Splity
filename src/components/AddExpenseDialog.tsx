@@ -126,14 +126,20 @@ export function AddExpenseDialog({
         setParticipants(initialSplits.map((s) => s.user_id));
         const amounts: Record<string, string> = {};
         const notes: Record<string, string> = {};
+        const exactEqual = initialExpense.amount / initialSplits.length;
+        let isEqual = true;
         initialSplits.forEach((s) => {
           amounts[s.user_id] = s.amount_owed.toString();
+          if (Math.abs(s.amount_owed - exactEqual) > 0.02) {
+            isEqual = false;
+          }
           if (s.note || splitNotes[s.user_id]) {
             notes[s.user_id] = s.note || splitNotes[s.user_id] || "";
           }
         });
         setCustomAmounts(amounts);
         setCustomNotes(notes);
+        setSplitMode(isEqual ? "equal" : "amount");
       } else if (members.length > 0) {
         setParticipants(members.map((m) => m.id));
       }
