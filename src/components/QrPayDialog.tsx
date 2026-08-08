@@ -14,7 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { getMyGroups, getGroupExpenses, getSplitsForGroup } from "@/lib/api";
+import { getMyGroups, getGroupExpenses, getSplitsForGroup, getCleanExpenseDescription } from "@/lib/api";
 import { computeExpenseBreakdown } from "@/lib/breakdown";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
 
@@ -281,7 +281,7 @@ export function QrPayDialog({
                           <div className="flex-1 min-w-0 space-y-1">
                             <div className="flex justify-between items-start">
                               <p className="text-sm font-medium leading-none truncate">
-                                {e.expense.description}
+                                {getCleanExpenseDescription(e.expense.description)}
                               </p>
                               <p className="text-xs text-muted-foreground whitespace-nowrap ml-2">
                                 {format(new Date(e.expense.created_at), "d MMM")}

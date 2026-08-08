@@ -16,6 +16,7 @@ import {
   getSplitsForGroup,
   inviteToGroup,
   leaveGroup,
+  parseExpenseDescription,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
@@ -577,7 +578,7 @@ function GroupDetail() {
               userId={userId}
               members={acceptedMembers.map((member) => ({
                 id: member.user_id,
-                name: nameOf(member.user_id),
+                name: nameOfDisplay(member.user_id),
               }))}
               trigger={<Button size="sm">Add expense</Button>}
             />
@@ -967,10 +968,11 @@ const ExpenseRow = memo(function ExpenseRow({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const canShowActions = expense.created_by === currentUserId && canRemove;
-  const descLower = expense.description.toLowerCase();
+  const { cleanDescription } = parseExpenseDescription(expense.description);
+  const descLower = cleanDescription.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
 
-  let title = expense.description;
+  let title = cleanDescription;
   let secondLine = "";
   let paymentMethod = "";
 

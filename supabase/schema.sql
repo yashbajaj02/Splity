@@ -100,6 +100,7 @@ create table if not exists public.expense_splits (
   expense_id  uuid not null references public.expenses(id) on delete cascade,
   user_id     uuid not null references auth.users(id) on delete cascade,
   amount_owed numeric(12,2) not null check (amount_owed >= 0),
+  note        text,
   unique (expense_id, user_id)
 );
 

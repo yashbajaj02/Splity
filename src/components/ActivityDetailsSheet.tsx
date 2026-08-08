@@ -12,6 +12,8 @@ import {
   getGroupExpenses,
   getSplitsForGroup,
   getProfilesByIds,
+  parseExpenseDescription,
+  getCleanMemberName,
 } from "@/lib/api";
 import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
 
@@ -64,8 +66,12 @@ export function ActivityDetailsSheet({
         (splitsByExpense[s.expense_id] ??= []).push(s);
       }
       
-      const payerIds = Array.from(new Set(allExpenses.map(e => e.paid_by)));
-      const profiles = await getProfilesByIds(payerIds);
+      const allUserIds = Array.from(new Set([
+        ...allExpenses.map(e => e.paid_by),
+        ...allExpenses.map(e => e.created_by),
+        ...splits.map(s => s.user_id),
+      ]));
+      const profiles = await getProfilesByIds(allUserIds);
       const profilesById: Record<string, Profile> = {};
       for (const p of profiles) {
         profilesById[p.id] = p;
@@ -131,12 +137,15 @@ export function ActivityDetailsSheet({
     });
   }
 
-  // Calculate items displaying ONLY the current user's share
+  // Calculate items displaying the current user's share and member splits
   const items = displayExpenses.map((exp) => {
     const splits = splitsByExpense[exp.id] ?? [];
+    const { cleanDescription, splitNotes } = parseExpenseDescription(exp.description);
     let userShare = 0;
 
     const selfSplit = splits.find((s) => s.user_id === currentUserId);
+    const selfNote = selfSplit?.note || splitNotes[currentUserId] || null;
+
     if (selfSplit) {
       userShare = Number(selfSplit.amount_owed);
     } else if (exp.paid_by === currentUserId) {
@@ -149,15 +158,33 @@ export function ActivityDetailsSheet({
     }
 
     const payerProfile = profilesById[exp.paid_by];
-    const payerName = payerProfile?.full_name || payerProfile?.username || "Someone";
+    const payerName = payerProfile?.full_name || payerProfile?.username?.replace(/^@/, "") || "Someone";
+
+    const memberSplits = splits.map((s) => {
+      const p = profilesById[s.user_id];
+      let name = s.user_id === currentUserId ? "You" : "Member";
+      if (s.user_id !== currentUserId) {
+        if (p?.full_name?.trim()) name = p.full_name.trim();
+        else if (p?.username?.trim()) name = p.username.trim().replace(/^@/, "");
+      }
+      const note = s.note || splitNotes[s.user_id] || null;
+      return {
+        userId: s.user_id,
+        name,
+        amount: Number(s.amount_owed),
+        note,
+      };
+    });
 
     return {
       id: exp.id,
-      title: exp.description,
+      title: cleanDescription,
       userShare: Math.max(0, userShare),
+      selfNote,
       totalAmount: Number(exp.amount),
       createdAt: exp.created_at,
       payerName,
+      splits: memberSplits,
     };
   });
 
@@ -235,6 +262,12 @@ export function ActivityDetailsSheet({
                         ₹{item.userShare.toFixed(2)}
                       </p>
                     </div>
+                    {item.selfNote ? (
+                      <div className="flex justify-between items-center text-xs">
+                        <p className="text-muted-foreground">Your Note</p>
+                        <p className="font-medium text-foreground">{item.selfNote}</p>
+                      </div>
+                    ) : null}
                     <div className="h-px w-full bg-border/50" />
                     <div className="flex justify-between items-center">
                       <p className="text-xs text-muted-foreground">Total Amount</p>
@@ -243,6 +276,49 @@ export function ActivityDetailsSheet({
                       </p>
                     </div>
                   </div>
+
+                  {/* MEMBER SPLIT BREAKDOWN */}
+                  {item.splits && item.splits.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Split Details ({item.splits.length} {item.splits.length === 1 ? "member" : "members"})
+                      </p>
+                      <div className="divide-y divide-border/40 rounded-xl border border-border/60 bg-card overflow-hidden">
+                        {item.splits.map((s) => {
+                          const isSelf = s.userId === currentUserId;
+                          return (
+                            <div key={s.userId} className="p-3 space-y-1.5">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div
+                                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase ${
+                                      isSelf
+                                        ? "bg-primary text-primary-foreground"
+                                        : "bg-secondary text-foreground"
+                                    }`}
+                                  >
+                                    {s.name.slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <p className="text-sm font-medium text-foreground truncate">
+                                    {s.name} {isSelf && <span className="text-xs text-primary font-normal">(You)</span>}
+                                  </p>
+                                </div>
+                                <p className="text-sm font-bold font-display text-foreground">
+                                  ₹{s.amount.toFixed(2)}
+                                </p>
+                              </div>
+                              {s.note ? (
+                                <div className="ml-9.5 flex items-start gap-1.5 rounded-lg bg-secondary/50 px-2.5 py-1 text-xs text-foreground border border-border/40">
+                                  <span className="font-semibold text-muted-foreground shrink-0">Note:</span>
+                                  <span className="break-words font-medium">{s.note}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
 

@@ -21,6 +21,8 @@ import {
   getGroup,
   getSplitsForGroup,
   getProfilesByIds,
+  parseExpenseDescription,
+  getCleanMemberName,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, Profile } from "@/lib/app-types";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
@@ -169,7 +171,8 @@ export function ExpenseDetailsModal({
   const splits = data?.splits ?? initialSplits ?? [];
   const profileMap = data?.profileMap ?? new Map<string, Profile>();
 
-  const descLower = expense.description.toLowerCase();
+  const { cleanDescription, splitNotes } = parseExpenseDescription(expense.description);
+  const descLower = cleanDescription.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
   const isUpi = descLower.includes("upi") || descLower.includes("online");
   const paymentMethod = isUpi ? "UPI Payment" : "Cash Payment";
@@ -182,12 +185,12 @@ export function ExpenseDetailsModal({
   } else if (paidByProfile?.full_name?.trim()) {
     paidByName = paidByProfile.full_name.trim();
   } else if (paidByProfile?.username?.trim()) {
-    paidByName = `@${paidByProfile.username.trim()}`;
+    paidByName = paidByProfile.username.trim().replace(/^@/, "");
   } else if (propCreatorDisplayName && expense.paid_by === expense.created_by) {
-    paidByName = propCreatorDisplayName;
+    paidByName = getCleanMemberName(propCreatorDisplayName);
   }
 
-  const paidByUsername = paidByProfile?.username ? `@${paidByProfile.username}` : null;
+  const paidByUsername = paidByProfile?.username ? `@${paidByProfile.username.replace(/^@/, "")}` : null;
 
   // Created by info
   const createdByProfile = profileMap.get(expense.created_by);
@@ -197,9 +200,9 @@ export function ExpenseDetailsModal({
   } else if (createdByProfile?.full_name?.trim()) {
     createdByName = createdByProfile.full_name.trim();
   } else if (createdByProfile?.username?.trim()) {
-    createdByName = `@${createdByProfile.username.trim()}`;
+    createdByName = createdByProfile.username.trim().replace(/^@/, "");
   } else if (propCreatorDisplayName) {
-    createdByName = propCreatorDisplayName;
+    createdByName = getCleanMemberName(propCreatorDisplayName);
   }
 
   // Your share
@@ -229,7 +232,7 @@ export function ExpenseDetailsModal({
             <div className="flex items-center justify-between px-5 pt-4 pb-3.5 border-b border-border/60 bg-muted/20 shrink-0">
               <div className="flex items-center gap-3 min-w-0 pr-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-xl shadow-xs">
-                  {getExpenseIcon(expense.description)}
+                  {getExpenseIcon(cleanDescription)}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -267,7 +270,7 @@ export function ExpenseDetailsModal({
               {/* Full Title & Amount Hero */}
               <div className="space-y-3">
                 <h2 className="font-display text-lg sm:text-xl font-bold text-foreground break-words leading-snug">
-                  {expense.description}
+                  {cleanDescription}
                 </h2>
 
                 <div className="flex flex-wrap items-baseline justify-between gap-2 p-4 rounded-2xl bg-secondary/40 border border-border/60">
@@ -329,7 +332,7 @@ export function ExpenseDetailsModal({
                     Split Details ({splits.length} {splits.length === 1 ? "member" : "members"})
                   </h3>
                   <span className="text-[11px] text-muted-foreground font-medium">
-                    {isSettlement ? paymentMethod : "Split equally"}
+                    {isSettlement ? paymentMethod : "Split details"}
                   </span>
                 </div>
 
@@ -350,36 +353,41 @@ export function ExpenseDetailsModal({
                       if (!isMe && memberProfile?.full_name?.trim()) {
                         memberName = memberProfile.full_name.trim();
                       } else if (!isMe && memberProfile?.username?.trim()) {
-                        memberName = `@${memberProfile.username.trim()}`;
+                        memberName = memberProfile.username.trim().replace(/^@/, "");
                       } else if (!isMe && acceptedMembers) {
                         const matched = acceptedMembers.find((m) => m.id === split.user_id);
-                        if (matched) memberName = matched.name;
+                        if (matched) memberName = getCleanMemberName(matched.name);
                       }
 
-                      const username = memberProfile?.username ? `@${memberProfile.username}` : null;
                       const owedAmount = Number(split.amount_owed);
+                      const note = split.note || splitNotes[split.user_id] || null;
 
                       return (
-                        <div key={split.id || split.user_id} className="flex items-center justify-between p-3">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
-                              {memberName.slice(0, 2).toUpperCase()}
+                        <div key={split.id || split.user_id} className="p-3.5 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}>
+                                {memberName.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-medium text-sm text-foreground truncate">
+                                  {memberName} {isMe && <span className="text-xs text-primary font-normal">(You)</span>}
+                                </p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <p className="font-medium text-sm text-foreground truncate">
-                                {memberName} {isMe && <span className="text-xs text-primary font-normal">(You)</span>}
+                            <div className="text-right shrink-0">
+                              <p className="text-sm font-semibold font-display text-foreground">
+                                ₹{owedAmount.toFixed(2)}
                               </p>
-                              {username && !isMe && (
-                                <p className="text-xs text-muted-foreground truncate">{username}</p>
-                              )}
                             </div>
                           </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-xs text-muted-foreground">Share</p>
-                            <p className="text-sm font-semibold text-foreground">
-                              ₹{owedAmount.toFixed(2)}
-                            </p>
-                          </div>
+
+                          {note ? (
+                            <div className="ml-11 flex items-start gap-1.5 rounded-lg bg-secondary/50 px-2.5 py-1 text-xs text-foreground border border-border/40">
+                              <span className="font-semibold text-muted-foreground shrink-0">Note:</span>
+                              <span className="break-words font-medium">{note}</span>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}

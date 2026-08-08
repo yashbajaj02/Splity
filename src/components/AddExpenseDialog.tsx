@@ -4,8 +4,10 @@ import { Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   addExpense,
+  getCleanMemberName,
   getGroupMembers,
   getProfilesByIds,
+  parseExpenseDescription,
   updateExpense,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
@@ -59,6 +61,7 @@ export function AddExpenseDialog({
   const [participants, setParticipants] = useState<string[]>([]);
   const [splitMode, setSplitMode] = useState<"equal" | "amount" | "percentage">("equal");
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [customNotes, setCustomNotes] = useState<Record<string, string>>({});
   const [customPercentages, setCustomPercentages] = useState<Record<string, string>>({});
   const queryClient = useQueryClient();
 
@@ -78,7 +81,6 @@ export function AddExpenseDialog({
       .map((m) => m.user_id);
   }, [fixedMembers, membersQuery.data]);
 
-  console.log("IS FROZEN memberIds:", Object.isFrozen(memberIds));
   let sortedMemberIds = memberIds;
   try {
     sortedMemberIds.sort();
@@ -93,23 +95,26 @@ export function AddExpenseDialog({
   });
 
   const members: Member[] = useMemo(() => {
-    if (fixedMembers) return fixedMembers;
+    if (fixedMembers) {
+      return fixedMembers.map((m) => ({
+        id: m.id,
+        name: getCleanMemberName(m.name),
+      }));
+    }
     const pmap = new Map((profilesQuery.data ?? []).map((p) => [p.id, p]));
     return (membersQuery.data ?? [])
       .filter((m) => m.status === "accepted")
       .map((m) => {
         const p = pmap.get(m.user_id);
-        
-        let displayName = "user";
+        let displayName = "Member";
         if (p) {
-          if (p.full_name && p.username) displayName = `${p.full_name} (@${p.username})`;
-          else if (p.full_name) displayName = p.full_name;
-          else if (p.username) displayName = `@${p.username}`;
+          if (p.full_name?.trim()) displayName = p.full_name.trim();
+          else if (p.username?.trim()) displayName = p.username.trim().replace(/^@/, "");
         }
 
         return {
           id: m.user_id,
-          name: m.user_id === userId ? `You${p?.username ? ` (@${p.username})` : ""}` : displayName,
+          name: m.user_id === userId ? "You" : displayName,
         };
       });
   }, [fixedMembers, membersQuery.data, profilesQuery.data, userId]);
@@ -117,10 +122,21 @@ export function AddExpenseDialog({
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && initialExpense) {
-      setDescription(initialExpense.description);
+      const { cleanDescription, splitNotes } = parseExpenseDescription(initialExpense.description);
+      setDescription(cleanDescription);
       setAmount(initialExpense.amount.toString());
       if (initialSplits && initialSplits.length > 0) {
         setParticipants(initialSplits.map((s) => s.user_id));
+        const amounts: Record<string, string> = {};
+        const notes: Record<string, string> = {};
+        initialSplits.forEach((s) => {
+          amounts[s.user_id] = s.amount_owed.toString();
+          if (s.note || splitNotes[s.user_id]) {
+            notes[s.user_id] = s.note || splitNotes[s.user_id] || "";
+          }
+        });
+        setCustomAmounts(amounts);
+        setCustomNotes(notes);
       } else if (members.length > 0) {
         setParticipants(members.map((m) => m.id));
       }
@@ -140,6 +156,7 @@ export function AddExpenseDialog({
     setAmount("");
     setSplitMode("equal");
     setCustomAmounts({});
+    setCustomNotes({});
     setCustomPercentages({});
     setParticipants(members.map((m) => m.id));
   };
@@ -207,7 +224,7 @@ export function AddExpenseDialog({
       if (participants.length === 0)
         throw new Error("Select at least one person to split with.");
 
-      let splits: { userId: string; amount: number }[] = [];
+      let splits: { userId: string; amount: number; note?: string }[] = [];
 
       if (splitMode === "equal") {
         const cents = Math.round(total * 100);
@@ -226,7 +243,12 @@ export function AddExpenseDialog({
         splits = participants.map((uid) => {
           const val = Number(customAmounts[uid]) || 0;
           sum += val;
-          return { userId: uid, amount: Math.round(val * 100) / 100 };
+          const note = customNotes[uid]?.trim() || undefined;
+          return {
+            userId: uid,
+            amount: Math.round(val * 100) / 100,
+            note,
+          };
         });
         if (Math.abs(sum - total) > 0.02) {
           throw new Error(
@@ -451,7 +473,7 @@ export function AddExpenseDialog({
               {splitMode === "amount" && (
                 <div className="space-y-2 pt-1 transition-all duration-200">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground font-medium">Member amounts</span>
+                    <span className="text-muted-foreground font-medium">Member amounts & notes</span>
                     <span
                       className={`font-semibold ${
                         Math.abs(amountRemaining) < 0.01
@@ -468,7 +490,7 @@ export function AddExpenseDialog({
                           : `Over by ₹${Math.abs(amountRemaining).toFixed(2)}`}
                     </span>
                   </div>
-                  <div className="max-h-44 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
+                  <div className="max-h-56 space-y-2.5 overflow-y-auto rounded-xl border border-border p-3">
                     {participants.length === 0 ? (
                       <p className="text-xs text-muted-foreground text-center py-2">
                         Select members above to allocate amounts.
@@ -476,24 +498,36 @@ export function AddExpenseDialog({
                     ) : (
                       participants.map((pid) => {
                         const m = members.find((x) => x.id === pid);
+                        const displayName = m?.name || "Member";
                         return (
-                          <div key={pid} className="flex items-center justify-between gap-3">
-                            <span className="text-sm font-medium truncate flex-1">{m?.name || "Member"}</span>
-                            <div className="relative w-28 shrink-0">
-                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">₹</span>
-                              <Input
-                                type="number"
-                                inputMode="decimal"
-                                step="0.01"
-                                min="0"
-                                placeholder="0.00"
-                                value={customAmounts[pid] ?? ""}
-                                onChange={(e) =>
-                                  setCustomAmounts((prev) => ({ ...prev, [pid]: e.target.value }))
-                                }
-                                className="pl-6 h-8 text-xs font-semibold"
-                              />
+                          <div key={pid} className="space-y-1.5 rounded-xl bg-secondary/30 p-2.5 border border-border/50">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-sm font-medium truncate flex-1">{displayName}</span>
+                              <div className="relative w-28 shrink-0">
+                                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">₹</span>
+                                <Input
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="0.00"
+                                  value={customAmounts[pid] ?? ""}
+                                  onChange={(e) =>
+                                    setCustomAmounts((prev) => ({ ...prev, [pid]: e.target.value }))
+                                  }
+                                  className="pl-6 h-8 text-xs font-semibold bg-background"
+                                />
+                              </div>
                             </div>
+                            <Input
+                              type="text"
+                              placeholder={`Optional note for ${displayName}...`}
+                              value={customNotes[pid] ?? ""}
+                              onChange={(e) =>
+                                setCustomNotes((prev) => ({ ...prev, [pid]: e.target.value }))
+                              }
+                              className="h-7 text-xs bg-background/90 placeholder:text-muted-foreground/70"
+                            />
                           </div>
                         );
                       })

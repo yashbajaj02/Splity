@@ -47,6 +47,7 @@ export interface ExpenseSplit {
   expense_id: string;
   user_id: string;
   amount_owed: number;
+  note?: string | null;
 }
 
 export interface AppNotification {

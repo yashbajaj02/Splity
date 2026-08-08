@@ -11,6 +11,48 @@ import { computePairwiseDebts } from "./debt";
 
 const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
 
+export function serializeExpenseDescription(
+  cleanDescription: string,
+  splitNotes?: Record<string, string>,
+): string {
+  if (!splitNotes) return cleanDescription;
+  const filtered: Record<string, string> = {};
+  for (const [k, v] of Object.entries(splitNotes)) {
+    if (v && v.trim()) {
+      filtered[k] = v.trim();
+    }
+  }
+  if (Object.keys(filtered).length === 0) return cleanDescription;
+  return `${cleanDescription.trim()}\n<!--SPLIT_NOTES:${JSON.stringify(filtered)}-->`;
+}
+
+export function parseExpenseDescription(rawDescription: string): {
+  cleanDescription: string;
+  splitNotes: Record<string, string>;
+} {
+  if (!rawDescription) return { cleanDescription: "", splitNotes: {} };
+  const match = rawDescription.match(/<!--SPLIT_NOTES:(.*?)-->/s);
+  if (match) {
+    try {
+      const splitNotes = JSON.parse(match[1]);
+      const cleanDescription = rawDescription.replace(/\n?<!--SPLIT_NOTES:.*?-->/s, "").trim();
+      return { cleanDescription, splitNotes };
+    } catch {
+      // fallback
+    }
+  }
+  return { cleanDescription: rawDescription.trim(), splitNotes: {} };
+}
+
+export function getCleanExpenseDescription(rawDescription: string): string {
+  return parseExpenseDescription(rawDescription).cleanDescription;
+}
+
+export function getCleanMemberName(name: string): string {
+  if (!name) return "Member";
+  return name.replace(/\s*\(@[a-zA-Z0-9._-]+\)/g, "").replace(/^@/, "").trim() || name;
+}
+
 function buildExpenseAddedMessage(opts: {
   description: string;
   groupName: string;
@@ -245,12 +287,18 @@ export async function getExpense(expenseId: string): Promise<Expense | null> {
 export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]> {
   const { data, error } = await supabase
     .from("expense_splits")
-    .select("*, expenses!inner(group_id)")
+    .select("*, expenses!inner(group_id, description)")
     .eq("expenses.group_id", groupId);
   if (error) throw error;
   return (data ?? []).map((d: any) => {
     const { expenses, ...split } = d;
-    return split;
+    const notes = expenses?.description
+      ? parseExpenseDescription(expenses.description).splitNotes
+      : {};
+    return {
+      ...split,
+      note: split.note || notes[split.user_id] || null,
+    };
   }) as ExpenseSplit[];
 }
 
@@ -259,8 +307,16 @@ export async function addExpense(opts: {
   createdBy: string;
   description: string;
   amount: number;
-  splits: { userId: string; amount: number }[];
+  splits: { userId: string; amount: number; note?: string }[];
 }) {
+  const splitNotesMap: Record<string, string> = {};
+  opts.splits.forEach((s) => {
+    if (s.note?.trim()) {
+      splitNotesMap[s.userId] = s.note.trim();
+    }
+  });
+  const fullDescription = serializeExpenseDescription(opts.description, splitNotesMap);
+
   // 1. Insert expense immediately
   const { data, error } = await supabase
     .from("expenses")
@@ -268,7 +324,7 @@ export async function addExpense(opts: {
       group_id: opts.groupId,
       created_by: opts.createdBy,
       paid_by: opts.createdBy, // always the authenticated user
-      description: opts.description,
+      description: fullDescription,
       amount: opts.amount,
     })
     .select("*")
@@ -281,8 +337,18 @@ export async function addExpense(opts: {
     expense_id: expense.id,
     user_id: s.userId,
     amount_owed: s.amount,
+    ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
-  const { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  let { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  if (sErr && /note|column/i.test(sErr.message)) {
+    const fallbackRows = opts.splits.map((s) => ({
+      expense_id: expense.id,
+      user_id: s.userId,
+      amount_owed: s.amount,
+    }));
+    const res = await supabase.from("expense_splits").insert(fallbackRows);
+    sErr = res.error;
+  }
   if (sErr) throw sErr;
 
   // 3. Send notifications asynchronously without failing the expense operation
@@ -293,6 +359,7 @@ export async function addExpense(opts: {
       getGroupMembers(opts.groupId),
     ])
       .then(async ([group, creator, members]) => {
+        const cleanDesc = getCleanExpenseDescription(opts.description);
         const involvedUserIds = new Set(opts.splits.map((s) => s.userId));
         const recipients = members
           .filter(
@@ -304,22 +371,32 @@ export async function addExpense(opts: {
           .map((member) => member.user_id);
 
         if (recipients.length > 0) {
-          const paidByName = creator?.username ? `@${creator.username}` : "the sender";
-          const notificationRows = recipients.map((recipientId) => ({
-            recipient_id: recipientId,
-            sender_id: opts.createdBy,
-            type: "expense_added" as const,
-            status: "pending" as const,
-            group_id: opts.groupId,
-            amount: opts.amount,
-            message: buildExpenseAddedMessage({
-              description: opts.description,
-              groupName: group?.name ?? "your group",
-              paidByName,
-            }),
-            sender_username: creator?.username ?? null,
-            sender_upi: creator?.upi_id ?? null,
-          }));
+          const paidByName = creator?.username
+            ? `@${creator.username}`
+            : (creator?.full_name ?? "the sender");
+          const notificationRows = recipients.map((recipientId) => {
+            const recipientSplit = opts.splits.find((s) => s.userId === recipientId);
+            const recipientAmount = recipientSplit ? recipientSplit.amount : opts.amount;
+            const recipientNote =
+              recipientSplit?.note?.trim() || splitNotesMap[recipientId] || "";
+            const noteSuffix = recipientNote ? ` • ${recipientNote}` : "";
+
+            return {
+              recipient_id: recipientId,
+              sender_id: opts.createdBy,
+              type: "expense_added" as const,
+              status: "pending" as const,
+              group_id: opts.groupId,
+              amount: recipientAmount,
+              message: buildExpenseAddedMessage({
+                description: `${cleanDesc}${noteSuffix}`,
+                groupName: group?.name ?? "your group",
+                paidByName,
+              }),
+              sender_username: creator?.username ?? null,
+              sender_upi: creator?.upi_id ?? null,
+            };
+          });
 
           let { error: notificationError } = await supabase
             .from("notifications")
@@ -379,7 +456,7 @@ export async function updateExpense(opts: {
   userId: string;
   description: string;
   amount: number;
-  splits: { userId: string; amount: number }[];
+  splits: { userId: string; amount: number; note?: string }[];
 }) {
   const expense = await getExpense(opts.expenseId);
   if (!expense) throw new Error("Expense not found.");
@@ -392,10 +469,18 @@ export async function updateExpense(opts: {
     throw new Error("This expense can only be edited within 5 hours.");
   }
 
+  const splitNotesMap: Record<string, string> = {};
+  opts.splits.forEach((s) => {
+    if (s.note?.trim()) {
+      splitNotesMap[s.userId] = s.note.trim();
+    }
+  });
+  const fullDescription = serializeExpenseDescription(opts.description, splitNotesMap);
+
   const { data, error } = await supabase
     .from("expenses")
     .update({
-      description: opts.description,
+      description: fullDescription,
       amount: opts.amount,
     })
     .eq("id", opts.expenseId)
@@ -413,8 +498,18 @@ export async function updateExpense(opts: {
     expense_id: opts.expenseId,
     user_id: s.userId,
     amount_owed: s.amount,
+    ...(s.note?.trim() ? { note: s.note.trim() } : {}),
   }));
-  const { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  let { error: sErr } = await supabase.from("expense_splits").insert(rows);
+  if (sErr && /note|column/i.test(sErr.message)) {
+    const fallbackRows = opts.splits.map((s) => ({
+      expense_id: opts.expenseId,
+      user_id: s.userId,
+      amount_owed: s.amount,
+    }));
+    const res = await supabase.from("expense_splits").insert(fallbackRows);
+    sErr = res.error;
+  }
   if (sErr) throw sErr;
 
   return data as Expense;
