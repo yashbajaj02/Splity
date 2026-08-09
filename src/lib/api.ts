@@ -306,7 +306,7 @@ export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]
   if (currentUserId && splitsData && splitsData.length > 0) {
     const myOwnedExpenses = Array.from(
       new Set(
-        splitsData.filter((s) => s.expenses.created_by === currentUserId).map((s) => s.expense_id),
+        splitsData.filter((s) => (s.expenses as any).created_by === currentUserId).map((s) => s.expense_id),
       ),
     );
 
