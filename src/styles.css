@@ -174,13 +174,18 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  h1, h2, h3, h4, .font-display {
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
     font-family: var(--font-display);
   }
 }
 
 @utility bg-app-gradient {
-  background-image: radial-gradient(
+  background-image:
+    radial-gradient(
       120% 120% at 0% 0%,
       color-mix(in oklch, var(--primary) 14%, transparent),
       transparent 55%

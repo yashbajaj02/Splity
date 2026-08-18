@@ -176,7 +176,6 @@ function getFirstName(name: string) {
   return trimmed.split(/\s+/)[0];
 }
 
-
 function EmptyState({ userId }: { userId: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-border bg-card/50 p-10 text-center">

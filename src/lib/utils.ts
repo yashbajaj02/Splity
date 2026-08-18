@@ -15,13 +15,23 @@ export function getInitials(name: string, email: string): string {
 
 export function getCleanErrorMessage(error: any): string {
   if (!error) return "An unexpected error occurred.";
-  const msg = typeof error === "string" ? error : (error.message || String(error));
+  const msg = typeof error === "string" ? error : error.message || String(error);
   const technicalKeywords = [
-    "PostgrestError", "duplicate key", "violates unique constraint", 
-    "JSON", "SQL", "{", "}", "TypeError", "undefined", "null", "NaN", "Failed to fetch"
+    "PostgrestError",
+    "duplicate key",
+    "violates unique constraint",
+    "JSON",
+    "SQL",
+    "{",
+    "}",
+    "TypeError",
+    "undefined",
+    "null",
+    "NaN",
+    "Failed to fetch",
   ];
   const isTechnical = technicalKeywords.some((keyword) => msg.includes(keyword));
-  
+
   if (isTechnical) {
     return "An unexpected error occurred. Please try again.";
   }

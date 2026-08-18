@@ -2,7 +2,14 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Receipt, X, MessageSquareText } from "lucide-react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Dialog, DialogPortal, DialogOverlay, DialogContent, DialogHeader, DialogClose } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogPortal,
+  DialogOverlay,
+  DialogContent,
+  DialogHeader,
+  DialogClose,
+} from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   getSplitsForGroup,
@@ -34,11 +41,15 @@ export function ActivityExpenseDetailsModal({
   });
 
   const allUserIds = Array.from(
-    new Set([
-      expense?.paid_by,
-      expense?.created_by,
-      ...(splitsQuery.data ?? []).filter(s => s.expense_id === expense?.id).map((s) => s.user_id),
-    ].filter(Boolean))
+    new Set(
+      [
+        expense?.paid_by,
+        expense?.created_by,
+        ...(splitsQuery.data ?? [])
+          .filter((s) => s.expense_id === expense?.id)
+          .map((s) => s.user_id),
+      ].filter(Boolean),
+    ),
   ) as string[];
 
   const profilesQuery = useQuery({
@@ -58,7 +69,7 @@ export function ActivityExpenseDetailsModal({
   };
 
   const { cleanDescription, splitNotes } = parseExpenseDescription(expense.description);
-  
+
   const creatorName = getProfileName(expense.created_by);
 
   // Your share
@@ -81,9 +92,7 @@ export function ActivityExpenseDetailsModal({
   }
 
   const dateObj = new Date(expense.created_at);
-  const formattedDate = !isNaN(dateObj.getTime()) 
-    ? format(dateObj, "dd MMM yyyy • h:mm a")
-    : "";
+  const formattedDate = !isNaN(dateObj.getTime()) ? format(dateObj, "dd MMM yyyy • h:mm a") : "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

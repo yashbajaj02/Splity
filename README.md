@@ -72,11 +72,11 @@ Built with performance, scalability, and user experience in mind.
 
 # 🛠 Tech Stack
 
-| Frontend | Backend | Database | Deployment |
-|-----------|----------|-----------|------------|
-| React | Supabase | PostgreSQL | Vercel |
-| TypeScript | Supabase Auth | Row Level Security | PWA |
-| Vite | Realtime | SQL Functions | |
+| Frontend   | Backend       | Database           | Deployment |
+| ---------- | ------------- | ------------------ | ---------- |
+| React      | Supabase      | PostgreSQL         | Vercel     |
+| TypeScript | Supabase Auth | Row Level Security | PWA        |
+| Vite       | Realtime      | SQL Functions      |            |
 
 ---
 

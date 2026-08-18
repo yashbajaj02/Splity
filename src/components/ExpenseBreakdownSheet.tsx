@@ -10,10 +10,18 @@ import {
 } from "@/components/ui/drawer";
 import { getMyGroups, getGroupExpenses, getSplitsForGroup, getProfilesByIds } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
+import { computePairwiseLedger } from "@/lib/ledger";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 
 function getExpenseIcon(description: string): string {
   const desc = description.toLowerCase();
+  if (
+    desc.includes("settlement") ||
+    desc.includes("paid") ||
+    desc.includes("upi") ||
+    desc.includes("cash")
+  )
+    return "💸";
   if (
     desc.includes("pizza") ||
     desc.includes("food") ||
@@ -125,46 +133,12 @@ export function ExpenseBreakdownSheet({
 
   const { allExpenses = [], splitsByExpense = {}, profileMap = new Map() } = data ?? {};
 
-  // 1. Filter expenses that involve BOTH currentUserId and counterpartyId
-  const relevantExpenses = allExpenses.filter((expense) => {
-    const splits = splitsByExpense[expense.id] ?? [];
-    const userIdsInSplits = new Set(splits.map((s) => s.user_id));
-    userIdsInSplits.add(expense.paid_by);
-    return userIdsInSplits.has(currentUserId) && userIdsInSplits.has(counterpartyId);
-  });
+  // Compute the running pairwise ledger since last full settlement (newest first)
+  const ledger = computePairwiseLedger(currentUserId, counterpartyId, allExpenses, splitsByExpense);
 
-  // Sort chronological ascending
-  relevantExpenses.sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-  );
-
-  // 2. Find last settlement timestamp
-  let lastSettlementTime = 0;
-  for (const exp of relevantExpenses) {
-    const isSettlement =
-      exp.description.toLowerCase().includes("settlement") ||
-      exp.description.toLowerCase().includes("paid");
-    if (isSettlement) {
-      const t = new Date(exp.created_at).getTime();
-      if (t > lastSettlementTime) {
-        lastSettlementTime = t;
-      }
-    }
-  }
-
-  // 3. Keep non-settlement expenses created AFTER last settlement
-  const filteredExpenses = relevantExpenses.filter((exp) => {
-    const isSettlement =
-      exp.description.toLowerCase().includes("settlement") ||
-      exp.description.toLowerCase().includes("paid");
-    if (isSettlement) return false;
-    if (lastSettlementTime > 0) {
-      return new Date(exp.created_at).getTime() > lastSettlementTime;
-    }
-    return true;
-  });
-
-  const totalShared = filteredExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const ledgerItems = ledger.items;
+  const totalShared = ledger.totalSharedAmount;
+  const expensesCount = ledger.totalExpensesCount;
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
@@ -205,71 +179,61 @@ export function ExpenseBreakdownSheet({
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
-          ) : filteredExpenses.length === 0 ? (
+          ) : ledgerItems.length === 0 ? (
             <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
               No new expenses since last settlement.
             </div>
           ) : (
             <div className="space-y-2.5">
-              {filteredExpenses.map((exp) => {
-                const splits = splitsByExpense[exp.id] ?? [];
-                let yourShare = 0;
-
-                if (exp.paid_by === currentUserId) {
-                  const selfSplit = splits.find((s) => s.user_id === currentUserId);
-                  if (selfSplit) {
-                    yourShare = Number(selfSplit.amount_owed);
-                  } else {
-                    const othersOwed = splits
-                      .filter((s) => s.user_id !== currentUserId)
-                      .reduce((sum, s) => sum + Number(s.amount_owed), 0);
-                    yourShare = Number(exp.amount) - othersOwed;
-                  }
-                } else {
-                  const selfSplit = splits.find((s) => s.user_id === currentUserId);
-                  yourShare = selfSplit ? Number(selfSplit.amount_owed) : 0;
-                }
-
+              {ledgerItems.map((item) => {
                 let addedBy = "You";
-                if (exp.paid_by === counterpartyId) {
+                if (item.paidBy === counterpartyId) {
                   const p = profileMap.get(counterpartyId);
                   addedBy = p?.full_name?.trim() || p?.username?.trim() || displayName;
-                } else if (exp.paid_by !== currentUserId) {
-                  const p = profileMap.get(exp.paid_by);
+                } else if (item.paidBy !== currentUserId) {
+                  const p = profileMap.get(item.paidBy);
                   addedBy = p?.full_name?.trim() || p?.username?.trim() || "Someone";
                 }
 
-                const isPaidByMe = exp.paid_by === currentUserId;
+                const isPaidByMe = item.paidBy === currentUserId;
                 const cardStyle = isPaidByMe
                   ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
                   : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
 
                 return (
                   <div
-                    key={exp.id}
+                    key={item.id}
                     className={`flex items-center justify-between p-3.5 rounded-xl border transition-colors ${cardStyle}`}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-lg">
-                        {getExpenseIcon(exp.description)}
+                        {getExpenseIcon(item.cleanDescription)}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-sm truncate text-foreground">
-                          {exp.description}
+                          {item.cleanDescription}
                         </p>
                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                          <span>Added by {addedBy}</span>
+                          <span>
+                            {item.isSettlement
+                              ? isPaidByMe
+                                ? "Paid by You"
+                                : `Paid by ${addedBy}`
+                              : `Added by ${addedBy}`}
+                          </span>
                           <span>•</span>
-                          <span>{format(new Date(exp.created_at), "d MMM")}</span>
+                          <span>{format(new Date(item.createdAt), "d MMM")}</span>
                         </div>
                       </div>
                     </div>
                     <div className="text-right shrink-0 ml-3">
                       <p className="text-xs text-muted-foreground">
-                        Total Bill ₹{Number(exp.amount).toFixed(2)}
+                        {item.isSettlement ? "Settlement" : `Total Bill ₹${item.amount.toFixed(2)}`}
                       </p>
                       <p className="text-sm font-semibold text-foreground mt-0.5">
-                        Your Share ₹{yourShare.toFixed(2)}
+                        {item.isSettlement
+                          ? `₹${item.amount.toFixed(2)}`
+                          : `Your Share ₹${item.yourShare.toFixed(2)}`}
                       </p>
                     </div>
                   </div>
@@ -283,7 +247,7 @@ export function ExpenseBreakdownSheet({
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
               <p className="text-[10px] font-semibold uppercase text-muted-foreground">Expenses</p>
-              <p className="text-base font-bold font-display mt-0.5">{filteredExpenses.length}</p>
+              <p className="text-base font-bold font-display mt-0.5">{expensesCount}</p>
             </div>
             <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
               <p className="text-[10px] font-semibold uppercase text-muted-foreground">

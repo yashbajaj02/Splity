@@ -211,4 +211,3 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
     </nav>
   );
 }
-
