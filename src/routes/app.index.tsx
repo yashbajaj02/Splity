@@ -2,6 +2,7 @@ import { getCleanErrorMessage, cn } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import {
   Plus,
   Search,
@@ -66,9 +67,9 @@ function GroupsHome() {
   const [searchQuery, setSearchQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
-  // Fetch profile for greeting name
-  const profileQuery = useQuery({
-    queryKey: ["profile", userId],
+  // Profile query — cache-first so greeting name appears on warm loads
+  const profileQuery = useCachedQuery(`profile:${userId}`, {
+    queryKey: ["profile", userId] as const,
     queryFn: () => getProfile(userId!),
     enabled: !!userId,
     staleTime: 300_000,
@@ -82,8 +83,9 @@ function GroupsHome() {
 
   const greeting = getTimeGreeting();
 
-  const groupsQuery = useQuery({
-    queryKey: ["my-groups", userId],
+  // Groups query — cache-first so list renders immediately on warm loads
+  const groupsQuery = useCachedQuery(`groups:${userId}`, {
+    queryKey: ["my-groups", userId] as const,
     queryFn: () => getMyGroups(userId),
     enabled: !!userId,
   });
@@ -169,8 +171,8 @@ function GroupsHome() {
           )}
         </div>
 
-        {/* Group list */}
-        {groupsQuery.isLoading ? (
+        {/* Group list — spinner only on genuine first-ever cold load (no cache) */}
+        {groupsQuery.isLoading && !groupsQuery.isPlaceholderData ? (
           <div className="flex justify-center py-16">
             <Loader2 className="h-6 w-6 animate-spin text-emerald-600" />
           </div>

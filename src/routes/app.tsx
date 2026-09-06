@@ -8,6 +8,7 @@ import { useSupabaseRealtime } from "@/hooks/use-supabase-realtime";
 import { useNetworkStatus } from "@/hooks/use-network-status";
 import { startBackgroundSync } from "@/lib/offline-db";
 import { getProfile, getNotifications, executeSyncAction } from "@/lib/api";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import { Onboarding } from "@/components/Onboarding";
 import { AppLogo } from "@/components/AppLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -58,8 +59,8 @@ function AppLayout() {
     return () => window.removeEventListener("splity:synced", handleSynced);
   }, [queryClient]);
 
-  const profileQuery = useQuery({
-    queryKey: ["profile", userId],
+  const profileQuery = useCachedQuery(`profile:${userId ?? ""}`, {
+    queryKey: ["profile", userId] as const,
     queryFn: () => getProfile(userId!),
     enabled: !!userId && !isPasswordRecovery,
   });
@@ -73,7 +74,10 @@ function AppLayout() {
   // Global realtime synchronization
   useSupabaseRealtime(userId && !isPasswordRecovery ? userId : undefined);
 
-  if (loading || isPasswordRecovery || !session || profileQuery.isLoading) {
+  // Block render only when we have no profile data at all (genuine cold start).
+  // When placeholderData is served from IDB, isPlaceholderData=true and
+  // isLoading=false, so we fall through immediately to the app shell.
+  if (loading || isPasswordRecovery || !session || (profileQuery.isLoading && !profileQuery.isPlaceholderData)) {
     return (
       <div className="min-h-[100dvh] bg-background">
         <header className="sticky top-0 z-20 border-b border-border bg-background/80 px-5 py-3.5 header">

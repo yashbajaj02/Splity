@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useCachedQuery } from "./use-cached-query";
+import { setCachedData } from "@/lib/offline-db";
 import {
   getMyGroups,
   getGroupMembers,
@@ -18,14 +19,29 @@ export interface Balance {
 }
 
 export function useSettleBalances(userId: string) {
-  return useQuery({
-    queryKey: ["settle", userId],
+  return useCachedQuery(`settle:${userId}`, {
+    queryKey: ["settle", userId] as const,
     queryFn: async () => {
       const groups = await getMyGroups(userId);
-      const expenseArrays = await Promise.all(groups.map((g) => getGroupExpenses(g.id)));
-      const allExpenses: Expense[] = expenseArrays.flat();
+      if (!groups || groups.length === 0) {
+        const emptyResult = { iOwe: [], owedToMe: [] };
+        setCachedData(`settle:${userId}`, emptyResult).catch(() => {});
+        return emptyResult;
+      }
 
-      const splitsArrays = await Promise.all(groups.map((g) => getSplitsForGroup(g.id)));
+      // Parallelize fetching expenses, splits, and members for all groups concurrently
+      const [expenseArrays, splitsArrays, memberArrays] = await Promise.all([
+        Promise.all(groups.map((g) => getGroupExpenses(g.id))),
+        Promise.all(groups.map((g) => getSplitsForGroup(g.id))),
+        Promise.all(
+          groups.map(async (group) => ({
+            group,
+            members: await getGroupMembers(group.id),
+          })),
+        ),
+      ]);
+
+      const allExpenses: Expense[] = expenseArrays.flat();
       const splits = splitsArrays.flat();
 
       const splitsByExpense: Record<string, ExpenseSplit[]> = {};
@@ -46,12 +62,6 @@ export function useSettleBalances(userId: string) {
       const profiles = await getProfilesByIds(ids);
       const pmap = new Map(profiles.map((p) => [p.id, p]));
 
-      const memberArrays = await Promise.all(
-        groups.map(async (group) => ({
-          group,
-          members: await getGroupMembers(group.id),
-        })),
-      );
       const groupInfoByCounterparty = new Map<string, { id: string; name: string }>();
       for (const { group, members } of memberArrays) {
         const acceptedIds = new Set(
@@ -65,7 +75,7 @@ export function useSettleBalances(userId: string) {
         }
       }
 
-      return {
+      const result = {
         iOwe: iOwe.map<Balance>((x) => {
           const g = groupInfoByCounterparty.get(x.counterpartyId);
           return {
@@ -85,6 +95,9 @@ export function useSettleBalances(userId: string) {
           };
         }),
       };
+
+      setCachedData(`settle:${userId}`, result).catch(() => {});
+      return result;
     },
     enabled: !!userId,
   });

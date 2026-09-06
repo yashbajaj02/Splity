@@ -3,11 +3,13 @@ import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { getMyGroups } from "@/lib/api";
 
+import { useCachedQuery } from "./use-cached-query";
+
 export function useSupabaseRealtime(userId: string | undefined) {
   const queryClient = useQueryClient();
 
-  const { data: groups } = useQuery({
-    queryKey: ["my-groups-realtime", userId],
+  const { data: groups } = useCachedQuery(`groups:${userId ?? ""}`, {
+    queryKey: ["my-groups", userId] as const,
     queryFn: () => (userId ? getMyGroups(userId) : Promise.resolve([])),
     enabled: !!userId,
   });

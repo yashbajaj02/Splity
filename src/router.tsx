@@ -6,8 +6,8 @@ export const getRouter = () => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
-        staleTime: 5 * 60 * 1000, // 5 minutes
-        gcTime: 10 * 60 * 1000, // 10 minutes
+        staleTime: 5 * 60 * 1000, // 5 minutes — data is fresh for 5 min after fetch
+        gcTime: 30 * 60 * 1000, // 30 minutes — keep in-memory cache across navigations
         refetchOnWindowFocus: false, // Relies on realtime subscriptions
       },
     },

@@ -27,6 +27,28 @@ export interface SyncQueueItem {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// In-memory warm cache: populated on first IndexedDB read so that subsequent
+// synchronous reads (for React Query placeholderData) don't need an async IDB
+// round-trip. This is module-level state — safe for the lifetime of the page.
+// ─────────────────────────────────────────────────────────────────────────────
+const warmCache = new Map<string, { data: any; updatedAt: number }>();
+
+/**
+ * Synchronous read from the in-memory warm cache populated by previous
+ * `getCachedData` calls. Returns `undefined` if the key has never been read
+ * from IndexedDB in this page session, or if the 3-month TTL has passed.
+ */
+export function getWarmCache<T>(key: string): T | undefined {
+  const entry = warmCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.updatedAt > RETENTION_MS) {
+    warmCache.delete(key);
+    return undefined;
+  }
+  return entry.data as T;
+}
+
 function getDb(): Promise<IDBDatabase> {
   if (typeof window === "undefined" || !("indexedDB" in window)) {
     return Promise.reject(new Error("IndexedDB not supported in this environment"));
@@ -61,13 +83,16 @@ function getDb(): Promise<IDBDatabase> {
 
 export async function setCachedData<T>(key: string, data: T): Promise<void> {
   try {
+    const now = Date.now();
+    // Keep warm cache in sync immediately so subsequent synchronous reads are fresh
+    warmCache.set(key, { data, updatedAt: now });
     const db = await getDb();
     const tx = db.transaction(CACHE_STORE, "readwrite");
     const store = tx.objectStore(CACHE_STORE);
     const entry: CacheEntry<T> = {
       key,
       data,
-      updatedAt: Date.now(),
+      updatedAt: now,
     };
     store.put(entry);
     await new Promise<void>((resolve, reject) => {
@@ -96,9 +121,12 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
     // Check 3-month retention
     if (Date.now() - result.updatedAt > RETENTION_MS) {
       deleteCachedData(key).catch(() => {});
+      warmCache.delete(key);
       return null;
     }
 
+    // Populate warm cache so getWarmCache() can serve synchronous reads
+    warmCache.set(key, { data: result.data, updatedAt: result.updatedAt });
     return result.data;
   } catch (err) {
     console.warn("[IndexedDB] Failed to read cache:", key, err);

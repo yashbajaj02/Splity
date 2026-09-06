@@ -174,9 +174,17 @@ export async function createGroup(
 }
 
 export async function getGroup(groupId: string): Promise<Group | null> {
-  const { data, error } = await supabase.from("groups").select("*").eq("id", groupId).maybeSingle();
-  if (error) throw error;
-  return data as Group | null;
+  const cacheKey = `group:${groupId}`;
+  try {
+    const { data, error } = await supabase.from("groups").select("*").eq("id", groupId).maybeSingle();
+    if (error) throw error;
+    if (data) setCachedData(cacheKey, data).catch(() => {});
+    return data as Group | null;
+  } catch (err) {
+    const cached = await getCachedData<Group>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function updateGroupAvatar(groupId: string, avatar_url: string | null): Promise<void> {
@@ -206,9 +214,18 @@ export async function deleteGroup(groupId: string) {
 /* ---------------------------- GROUP MEMBERS ----------------------------- */
 
 export async function getGroupMembers(groupId: string): Promise<GroupMember[]> {
-  const { data, error } = await supabase.from("group_members").select("*").eq("group_id", groupId);
-  if (error) throw error;
-  return (data ?? []) as GroupMember[];
+  const cacheKey = `group-members:${groupId}`;
+  try {
+    const { data, error } = await supabase.from("group_members").select("*").eq("group_id", groupId);
+    if (error) throw error;
+    const members = (data ?? []) as GroupMember[];
+    setCachedData(cacheKey, members).catch(() => {});
+    return members;
+  } catch (err) {
+    const cached = await getCachedData<GroupMember[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function getProfilesByIds(ids: string[]): Promise<Profile[]> {
@@ -364,74 +381,93 @@ export async function getExpense(expenseId: string): Promise<Expense | null> {
 }
 
 export async function getSplitsForGroup(groupId: string): Promise<ExpenseSplit[]> {
-  const session = await supabase.auth.getSession();
-  const currentUserId = session.data.session?.user?.id;
+  const cacheKey = `splits:${groupId}`;
+  try {
+    const session = await supabase.auth.getSession();
+    const currentUserId = session.data.session?.user?.id;
 
-  // 1. Fetch splits without notes (public to group)
-  // We explicitly omit "note" from the select list to prevent it from crossing the network
-  const { data: splitsData, error: splitsError } = await supabase
-    .from("expense_splits")
-    .select(
-      "id, expense_id, user_id, amount_owed, expenses!inner(group_id, description, created_by)",
-    )
-    .eq("expenses.group_id", groupId);
-
-  if (splitsError) throw splitsError;
-
-  // 2. Fetch notes for ONLY authorized rows (my splits + expenses I created)
-  const notesMap: Record<string, string> = {};
-
-  if (currentUserId && splitsData && splitsData.length > 0) {
-    const myOwnedExpenses = Array.from(
-      new Set(
-        splitsData.filter((s) => (s.expenses as any).created_by === currentUserId).map((s) => s.expense_id),
-      ),
-    );
-
-    // Query A: My own notes
-    const { data: myNotes } = await supabase
+    // 1. Fetch splits without notes (public to group)
+    const { data: splitsData, error: splitsError } = await supabase
       .from("expense_splits")
-      .select("id, note, expenses!inner(group_id)")
-      .eq("expenses.group_id", groupId)
-      .eq("user_id", currentUserId)
-      .not("note", "is", null);
+      .select(
+        "id, expense_id, user_id, amount_owed, expenses!inner(group_id, description, created_by)",
+      )
+      .eq("expenses.group_id", groupId);
 
-    if (myNotes) {
-      for (const n of myNotes) {
-        if (n.note) notesMap[n.id] = n.note;
+    if (splitsError) throw splitsError;
+
+    // 2. Fetch notes in parallel for authorized rows (my splits + expenses I created)
+    const notesMap: Record<string, string> = {};
+
+    if (currentUserId && splitsData && splitsData.length > 0) {
+      const myOwnedExpenses = Array.from(
+        new Set(
+          splitsData
+            .filter((s) => (s.expenses as any).created_by === currentUserId)
+            .map((s) => s.expense_id),
+        ),
+      );
+
+      const myNotesPromise = supabase
+        .from("expense_splits")
+        .select("id, note, expenses!inner(group_id)")
+        .eq("expenses.group_id", groupId)
+        .eq("user_id", currentUserId)
+        .not("note", "is", null);
+
+      const ownedNotesPromise =
+        myOwnedExpenses.length > 0
+          ? Promise.all(
+              Array.from({ length: Math.ceil(myOwnedExpenses.length / 100) }, (_, i) => {
+                const chunk = myOwnedExpenses.slice(i * 100, (i + 1) * 100);
+                return supabase
+                  .from("expense_splits")
+                  .select("id, note")
+                  .in("expense_id", chunk)
+                  .not("note", "is", null);
+              }),
+            )
+          : Promise.resolve([]);
+
+      const [{ data: myNotes }, ownedResults] = await Promise.all([
+        myNotesPromise,
+        ownedNotesPromise,
+      ]);
+
+      if (myNotes) {
+        for (const n of myNotes) {
+          if (n.note) notesMap[n.id] = n.note;
+        }
       }
-    }
 
-    // Query B: Notes for expenses I created
-    if (myOwnedExpenses.length > 0) {
-      for (let i = 0; i < myOwnedExpenses.length; i += 100) {
-        const chunk = myOwnedExpenses.slice(i, i + 100);
-        const { data: ownedNotes } = await supabase
-          .from("expense_splits")
-          .select("id, note")
-          .in("expense_id", chunk)
-          .not("note", "is", null);
-
-        if (ownedNotes) {
-          for (const n of ownedNotes) {
+      for (const res of ownedResults) {
+        if (res.data) {
+          for (const n of res.data) {
             if (n.note) notesMap[n.id] = n.note;
           }
         }
       }
     }
+
+    const splits = (splitsData ?? []).map((d: any) => {
+      const { expenses, ...split } = d;
+      const legacyNotes = expenses?.description
+        ? parseExpenseDescription(expenses.description).splitNotes
+        : {};
+
+      return {
+        ...split,
+        note: notesMap[split.id] || legacyNotes[split.user_id] || null,
+      };
+    }) as ExpenseSplit[];
+
+    setCachedData(cacheKey, splits).catch(() => {});
+    return splits;
+  } catch (err) {
+    const cached = await getCachedData<ExpenseSplit[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
   }
-
-  return (splitsData ?? []).map((d: any) => {
-    const { expenses, ...split } = d;
-    const legacyNotes = expenses?.description
-      ? parseExpenseDescription(expenses.description).splitNotes
-      : {};
-
-    return {
-      ...split,
-      note: notesMap[split.id] || legacyNotes[split.user_id] || null,
-    };
-  }) as ExpenseSplit[];
 }
 
 export async function addExpense(opts: {

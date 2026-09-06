@@ -1,7 +1,7 @@
 import { getCleanErrorMessage, getInitials } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus } from "lucide-react";
+import { Check, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import {
   addExpense,
@@ -15,7 +15,6 @@ import type { Expense, ExpenseSplit } from "@/lib/app-types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
@@ -461,24 +460,43 @@ export function AddExpenseDialog({
                   </button>
                 </div>
                 <div className="max-h-36 space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 p-2.5">
-                  {members.map((m) => (
-                    <label
-                      key={m.id}
-                      className="flex cursor-pointer items-center gap-2.5 text-sm select-none font-medium text-slate-700 p-1.5 rounded-xl hover:bg-slate-50 transition-colors"
-                    >
-                      <Checkbox
-                        checked={participants.includes(m.id)}
-                        onCheckedChange={() => toggle(m.id)}
-                      />
-                      <Avatar className="w-6 h-6 rounded-full shrink-0 shadow-2xs">
-                        <AvatarImage src={m.avatar_url || undefined} alt={m.name} />
-                        <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[10px]">
-                          {getInitials(m.name, "U")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="truncate">{m.name}</span>
-                    </label>
-                  ))}
+                  {members.map((m) => {
+                    const isSelected = participants.includes(m.id);
+                    return (
+                      <label
+                        key={m.id}
+                        className="flex cursor-pointer items-center gap-2.5 text-sm select-none font-medium text-slate-700 p-1.5 rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={isSelected}
+                          onChange={() => toggle(m.id)}
+                        />
+                        <div
+                          aria-hidden="true"
+                          className={`w-[22px] h-[22px] rounded-md flex items-center justify-center shrink-0 border transition-all duration-200 ${
+                            isSelected
+                              ? "bg-emerald-600 border-emerald-600 text-white"
+                              : "bg-transparent border-slate-300 text-transparent hover:border-slate-400"
+                          }`}
+                        >
+                          <Check
+                            className={`w-3.5 h-3.5 stroke-[2.5] transition-transform duration-200 ${
+                              isSelected ? "scale-100 opacity-100" : "scale-75 opacity-0"
+                            }`}
+                          />
+                        </div>
+                        <Avatar className="w-6 h-6 rounded-full shrink-0 shadow-2xs">
+                          <AvatarImage src={m.avatar_url || undefined} alt={m.name} />
+                          <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                            {getInitials(m.name, "U")}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="truncate">{m.name}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 

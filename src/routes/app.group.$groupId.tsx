@@ -2,6 +2,7 @@ import { getCleanErrorMessage, cn } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useMemo, useRef, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCachedQuery } from "@/hooks/use-cached-query";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -166,12 +167,13 @@ function GroupDetail() {
     return { fromDate: "", toDate: "" };
   })();
 
-  const groupQuery = useQuery({
-    queryKey: ["group", groupId],
+  // Group header — cache-first so group name/avatar render on warm loads
+  const groupQuery = useCachedQuery(`group:${groupId}`, {
+    queryKey: ["group", groupId] as const,
     queryFn: () => getGroup(groupId),
   });
-  const membersQuery = useQuery({
-    queryKey: ["group-members", groupId],
+  const membersQuery = useCachedQuery(`group-members:${groupId}`, {
+    queryKey: ["group-members", groupId] as const,
     queryFn: () => getGroupMembers(groupId),
   });
 
@@ -247,8 +249,8 @@ function GroupDetail() {
       setIsUpdatingName(false);
     }
   };
-  const expensesQuery = useQuery({
-    queryKey: ["group-expenses", groupId],
+  const expensesQuery = useCachedQuery(`expenses:${groupId}`, {
+    queryKey: ["group-expenses", groupId] as const,
     queryFn: () => getGroupExpenses(groupId),
   });
 
@@ -285,8 +287,8 @@ function GroupDetail() {
     return "user";
   };
 
-  const splitsQuery = useQuery({
-    queryKey: ["group-splits", groupId],
+  const splitsQuery = useCachedQuery(`splits:${groupId}`, {
+    queryKey: ["group-splits", groupId] as const,
     queryFn: () => getSplitsForGroup(groupId),
   });
 
@@ -422,7 +424,10 @@ function GroupDetail() {
       .reduce((sum, d) => sum + d.amount, 0);
   }, [visibleDebts, userId]);
 
-  if (groupQuery.isLoading) {
+  // Show spinner only on genuine first-ever cold load (no IDB cache available).
+  // When useCachedQuery provides placeholder data, isLoading=false and
+  // isPlaceholderData=true, so we fall through to render the cached group.
+  if (groupQuery.isLoading && !groupQuery.isPlaceholderData) {
     return (
       <div className="flex justify-center py-16">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
