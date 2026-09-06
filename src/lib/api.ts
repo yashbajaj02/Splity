@@ -1212,16 +1212,22 @@ export async function getFriends(userId: string): Promise<Friend[]> {
   try {
     const { data, error } = await supabase
       .from("friends")
-      .select("id, user_id, friend_id, created_at, profiles:friend_id(id, username, full_name, avatar_url)")
+      .select("*")
       .eq("user_id", userId)
       .order("created_at", { ascending: false });
     if (error) throw error;
+    
+    // Manually fetch profiles to avoid PostgREST foreign key relationship errors
+    const friendIds = (data ?? []).map((row: any) => row.friend_id);
+    const profiles = friendIds.length > 0 ? await getProfilesByIds(friendIds) : [];
+    const profileMap = new Map(profiles.map(p => [p.id, p]));
+
     const friends = (data ?? []).map((row: any) => ({
       id: row.id,
       user_id: row.user_id,
       friend_id: row.friend_id,
       created_at: row.created_at,
-      profile: row.profiles ?? undefined,
+      profile: profileMap.get(row.friend_id),
     })) as Friend[];
     setCachedData(cacheKey, friends).catch(() => {});
     return friends;

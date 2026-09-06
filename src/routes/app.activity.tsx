@@ -1610,12 +1610,14 @@ const NotificationCard = memo(function NotificationCard({
               </p>
             </div>
           ) : (
-            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            !(isInvite || isFriendRequest) && (
+              <ChevronRight className="h-5 w-5 text-muted-foreground" />
+            )
           )}
         </div>
       </ActivityMotionCard>
 
-      {counterpartyId ? (
+      {counterpartyId && sheetOpen ? (
         <ActivityDetailsSheet
           open={sheetOpen}
           onOpenChange={setSheetOpen}
