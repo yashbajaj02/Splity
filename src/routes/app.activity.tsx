@@ -39,6 +39,7 @@ import {
   getMyGroups,
   getAllMyExpenses,
   parseExpenseDescription,
+  getPendingFriendRequests,
 } from "@/lib/api";
 import { cn, getCleanErrorMessage, getInitials } from "@/lib/utils";
 import { CategoryIcon } from "@/components/CategoryIcon";
@@ -111,7 +112,7 @@ function ActivityPage() {
   const userId = session?.user?.id ?? "";
   const queryClient = useQueryClient();
 
-  const [typeFilter, setTypeFilter] = useState<"all" | "expenses" | "settlements">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "expenses" | "settlements" | "friend_requests">("all");
   const [datePreset, setDatePreset] = useState<DatePresetType>("all");
   const [dateSheetOpen, setDateSheetOpen] = useState(false);
   const [friendRequestsModalOpen, setFriendRequestsModalOpen] = useState(false);
@@ -121,6 +122,13 @@ function ActivityPage() {
   const notifQuery = useQuery({
     queryKey: ["notifications", userId],
     queryFn: () => getNotifications(userId),
+    enabled: !!userId,
+    staleTime: 15_000,
+  });
+
+  const friendRequestsQuery = useQuery({
+    queryKey: ["friend-requests", userId],
+    queryFn: () => getPendingFriendRequests(userId),
     enabled: !!userId,
     staleTime: 15_000,
   });
@@ -150,12 +158,15 @@ function ActivityPage() {
       if (n.sender_id) ids.add(n.sender_id);
       if (n.recipient_id) ids.add(n.recipient_id);
     }
+    for (const fr of friendRequestsQuery.data ?? []) {
+      if (fr.sender_id) ids.add(fr.sender_id);
+    }
     for (const e of expensesQuery.data ?? []) {
       if (e.created_by) ids.add(e.created_by);
       if (e.paid_by) ids.add(e.paid_by);
     }
     return Array.from(ids);
-  }, [notifQuery.data, expensesQuery.data]);
+  }, [notifQuery.data, friendRequestsQuery.data, expensesQuery.data]);
 
   const profilesQuery = useQuery({
     queryKey: ["profiles", profileIds.sort().join(",")],
@@ -171,6 +182,8 @@ function ActivityPage() {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
+    queryClient.invalidateQueries({ queryKey: ["friend-requests", userId] });
+    queryClient.invalidateQueries({ queryKey: ["friends", userId] });
     queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
     queryClient.invalidateQueries({ queryKey: ["settle", userId] });
   };
@@ -191,7 +204,7 @@ function ActivityPage() {
   });
 
   const respondFriend = useMutation({
-    mutationFn: (values: { notificationId: string; senderId: string; accept: boolean }) =>
+    mutationFn: (values: { notificationId?: string; senderId: string; accept: boolean }) =>
       respondToFriendRequest({
         notificationId: values.notificationId,
         senderId: values.senderId,
@@ -202,6 +215,7 @@ function ActivityPage() {
       toast.success(values.accept ? "Friend request accepted! ✅" : "Friend request declined");
       invalidate();
       queryClient.invalidateQueries({ queryKey: ["friends", userId] });
+      queryClient.invalidateQueries({ queryKey: ["friend-requests", userId] });
     },
     onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
@@ -241,25 +255,65 @@ function ActivityPage() {
   const notifications = notifQuery.data ?? [];
   const expenses = expensesQuery.data ?? [];
 
-  const pendingCount = useMemo(
-    () => notifications.filter((n) => n.status === "pending").length,
-    [notifications],
-  );
+  const pendingFriendRequests = useMemo(() => {
+    const list: AppNotification[] = [];
+    const seenSenders = new Set<string>();
 
-  const pendingFriendRequests = useMemo(
-    () =>
-      notifications.filter(
-        (n) => n.type === "friend_request" && n.status === "pending" && n.sender_id !== userId,
-      ),
-    [notifications, userId],
+    // 1. From notifications table
+    for (const n of notifications) {
+      if (
+        n.type === "friend_request" &&
+        n.status === "pending" &&
+        n.sender_id &&
+        n.sender_id !== userId
+      ) {
+        list.push(n);
+        seenSenders.add(n.sender_id);
+      }
+    }
+
+    // 2. From friend_requests table (source of truth if notification was not created)
+    for (const fr of friendRequestsQuery.data ?? []) {
+      if (fr.status === "pending" && fr.sender_id !== userId && !seenSenders.has(fr.sender_id)) {
+        list.push({
+          id: `fr-${fr.id}`,
+          recipient_id: fr.recipient_id,
+          sender_id: fr.sender_id,
+          type: "friend_request",
+          status: "pending",
+          group_id: null,
+          amount: null,
+          message: "sent you a friend request",
+          sender_username: null,
+          sender_upi: null,
+          created_at: fr.created_at,
+        });
+        seenSenders.add(fr.sender_id);
+      }
+    }
+
+    return list;
+  }, [notifications, friendRequestsQuery.data, userId]);
+
+  const pendingCount = useMemo(
+    () => notifications.filter((n) => n.status === "pending").length + (friendRequestsQuery.data ?? []).length,
+    [notifications, friendRequestsQuery.data],
   );
 
   const unifiedActivity = useMemo(() => {
     const items: UnifiedActivityItem[] = [];
+    const seenFriendSenders = new Set<string>();
 
     for (const n of notifications) {
       if (n.type !== "expense_added" && n.type !== "settlement_confirmed") {
         if (typeFilter === "expenses") continue;
+        if (typeFilter === "settlements") continue;
+        if (typeFilter === "friend_requests" && n.type !== "friend_request") continue;
+
+        if (n.type === "friend_request" && n.sender_id) {
+          seenFriendSenders.add(n.sender_id);
+        }
+
         items.push({
           type: "notification",
           id: `notif-${n.id}`,
@@ -269,29 +323,45 @@ function ActivityPage() {
       }
     }
 
-    for (const e of expenses) {
-      const { cleanDescription } = parseExpenseDescription(e.description);
-      const descLower = cleanDescription.toLowerCase();
-      const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
-
-      if (typeFilter === "expenses" && isSettlement) continue;
-      if (typeFilter === "settlements" && !isSettlement) continue;
-
-      if (!isSettlement && e.created_by === userId) {
-        continue;
+    // Add friend requests from friend_requests table if not already represented in notifications
+    for (const pfr of pendingFriendRequests) {
+      if (pfr.id.startsWith("fr-") && pfr.sender_id && !seenFriendSenders.has(pfr.sender_id)) {
+        if (typeFilter === "expenses") continue;
+        if (typeFilter === "settlements") continue;
+        items.push({
+          type: "notification",
+          id: pfr.id,
+          timestamp: pfr.created_at,
+          notification: pfr,
+        });
       }
+    }
 
-      items.push({
-        type: "expense",
-        id: `exp-${e.id}`,
-        timestamp: e.created_at,
-        expense: e,
-      });
+    if (typeFilter !== "friend_requests") {
+      for (const e of expenses) {
+        const { cleanDescription } = parseExpenseDescription(e.description);
+        const descLower = cleanDescription.toLowerCase();
+        const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+
+        if (typeFilter === "expenses" && isSettlement) continue;
+        if (typeFilter === "settlements" && !isSettlement) continue;
+
+        if (!isSettlement && e.created_by === userId) {
+          continue;
+        }
+
+        items.push({
+          type: "expense",
+          id: `exp-${e.id}`,
+          timestamp: e.created_at,
+          expense: e,
+        });
+      }
     }
 
     items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     return items;
-  }, [notifications, expenses, userId, typeFilter]);
+  }, [notifications, expenses, pendingFriendRequests, userId, typeFilter]);
 
   // Date range filtering
   const filteredActivity = useMemo(() => {
@@ -399,28 +469,6 @@ function ActivityPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Always Visible Friend Requests button with realtime badge */}
-          <button
-            type="button"
-            onClick={() => setFriendRequestsModalOpen(true)}
-            className={cn(
-              "relative h-10 px-3 rounded-2xl flex items-center gap-1.5 transition-all active:scale-95 border",
-              pendingFriendRequests.length > 0
-                ? "bg-emerald-50 border-emerald-300 text-emerald-700 shadow-2xs"
-                : "bg-slate-100/80 border-slate-200/50 text-slate-600 hover:bg-slate-200/70",
-            )}
-            title="Friend Requests"
-            aria-label="Friend Requests"
-          >
-            <UserPlus className="w-4 h-4 text-emerald-600 stroke-[2.2]" />
-            <span className="text-xs font-bold hidden sm:inline">Requests</span>
-            {pendingFriendRequests.length > 0 && (
-              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-xs">
-                {pendingFriendRequests.length}
-              </span>
-            )}
-          </button>
-
           {notifications.length > 0 && (
             <div className="flex items-center gap-1.5">
               {pendingCount > 0 && (
@@ -468,13 +516,13 @@ function ActivityPage() {
         </div>
       </div>
 
-      {/* Screen 1 & 3: Type Filter Pills (All / Expenses / Settlements) */}
-      <div className="flex items-center gap-2">
+      {/* Type Filter Pills (All / Expenses / Settlements / Friend Requests) */}
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         <button
           type="button"
           onClick={() => setTypeFilter("all")}
           className={cn(
-            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all shrink-0",
             typeFilter === "all"
               ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
               : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
@@ -486,7 +534,7 @@ function ActivityPage() {
           type="button"
           onClick={() => setTypeFilter("expenses")}
           className={cn(
-            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all shrink-0",
             typeFilter === "expenses"
               ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
               : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
@@ -498,13 +546,37 @@ function ActivityPage() {
           type="button"
           onClick={() => setTypeFilter("settlements")}
           className={cn(
-            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all shrink-0",
             typeFilter === "settlements"
               ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
               : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
           )}
         >
           Settlements
+        </button>
+        <button
+          type="button"
+          onClick={() => setTypeFilter("friend_requests")}
+          className={cn(
+            "rounded-full px-4 py-2 text-xs font-semibold transition-all shrink-0 flex items-center gap-1.5",
+            typeFilter === "friend_requests"
+              ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
+              : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
+          )}
+        >
+          <span>Friend Requests</span>
+          {pendingFriendRequests.length > 0 && (
+            <span
+              className={cn(
+                "flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold",
+                typeFilter === "friend_requests"
+                  ? "bg-white text-emerald-700"
+                  : "bg-rose-500 text-white",
+              )}
+            >
+              {pendingFriendRequests.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -895,8 +967,8 @@ function ActivityFilterModal({
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
-  typeFilter: "all" | "expenses" | "settlements";
-  onSelectType: (t: "all" | "expenses" | "settlements") => void;
+  typeFilter: "all" | "expenses" | "settlements" | "friend_requests";
+  onSelectType: (t: "all" | "expenses" | "settlements" | "friend_requests") => void;
   selectedPreset: DatePresetType;
   onSelectPreset: (p: DatePresetType) => void;
   customFrom: string;
@@ -904,7 +976,7 @@ function ActivityFilterModal({
   onCustomFromChange: (v: string) => void;
   onCustomToChange: (v: string) => void;
 }) {
-  const [draftType, setDraftType] = useState<"all" | "expenses" | "settlements">(typeFilter);
+  const [draftType, setDraftType] = useState<"all" | "expenses" | "settlements" | "friend_requests">(typeFilter);
   const [draftPreset, setDraftPreset] = useState<DatePresetType>(selectedPreset);
 
   // Sync state when opened
@@ -980,7 +1052,7 @@ function ActivityFilterModal({
             <h3 className="text-xs font-bold text-slate-900 mb-2.5">
               Activity Type
             </h3>
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-2 gap-2.5">
               {/* Card 1: All */}
               <button
                 type="button"
@@ -1041,6 +1113,28 @@ function ActivityFilterModal({
                 </div>
                 <span className="text-xs font-bold text-slate-800">Settlements</span>
                 {draftType === "settlements" && (
+                  <div className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  </div>
+                )}
+              </button>
+
+              {/* Card 4: Friend Requests */}
+              <button
+                type="button"
+                onClick={() => setDraftType("friend_requests")}
+                className={cn(
+                  "p-3 rounded-2xl flex flex-col items-center justify-center transition-all relative border",
+                  draftType === "friend_requests"
+                    ? "bg-emerald-50/80 border-emerald-500/50 shadow-xs"
+                    : "bg-white border-slate-100 hover:bg-slate-50/70",
+                )}
+              >
+                <div className="w-9 h-9 rounded-full bg-sky-100/70 text-sky-600 flex items-center justify-center mb-1.5">
+                  <UserPlus className="w-4 h-4 stroke-[2.2]" />
+                </div>
+                <span className="text-xs font-bold text-slate-800">Friends</span>
+                {draftType === "friend_requests" && (
                   <div className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
                     <Check className="w-2.5 h-2.5 stroke-[3]" />
                   </div>

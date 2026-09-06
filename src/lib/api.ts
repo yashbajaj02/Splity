@@ -1112,45 +1112,71 @@ export async function sendFriendRequest(
     sender_username: sender?.username ?? null,
     sender_upi: sender?.upi_id ?? null,
   });
-  // Notification failures are non-fatal; log and continue.
-  if (notifErr) console.warn("Friend request notification failed:", notifErr.message);
+  if (notifErr && /sender_username|sender_upi|column/i.test(notifErr.message)) {
+    await supabase.from("notifications").insert({
+      recipient_id: recipientId,
+      sender_id: senderId,
+      type: "friend_request",
+      status: "pending",
+      message: `sent you a friend request`,
+    });
+  } else if (notifErr) {
+    console.warn("Friend request notification failed:", notifErr.message);
+  }
+}
+
+/** Get pending incoming friend requests for a user from friend_requests table. */
+export async function getPendingFriendRequests(userId: string): Promise<FriendRequest[]> {
+  const cacheKey = `friend-requests:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("friend_requests")
+      .select("*")
+      .eq("recipient_id", userId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const requests = (data ?? []) as FriendRequest[];
+    setCachedData(cacheKey, requests).catch(() => {});
+    return requests;
+  } catch (err) {
+    const cached = await getCachedData<FriendRequest[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 /** Accept or decline a friend request. */
 export async function respondToFriendRequest(opts: {
-  notificationId: string;
+  notificationId?: string;
   senderId: string;
   recipientId: string; // current user
   accept: boolean;
 }): Promise<void> {
   if (opts.accept) {
-    // Insert symmetric friendship rows.
-    const { error: f1 } = await supabase
-      .from("friends")
-      .upsert({ user_id: opts.recipientId, friend_id: opts.senderId }, { onConflict: "user_id,friend_id" });
-    if (f1) throw f1;
-    const { error: f2 } = await supabase
-      .from("friends")
-      .upsert({ user_id: opts.senderId, friend_id: opts.recipientId }, { onConflict: "user_id,friend_id" });
-    if (f2) throw f2;
-
-    // Mark request as accepted.
-    await supabase
-      .from("friend_requests")
-      .update({ status: "accepted" })
-      .eq("sender_id", opts.senderId)
-      .eq("recipient_id", opts.recipientId);
+    // Insert both symmetric friendship rows via a SECURITY DEFINER function.
+    // Direct client upserts fail RLS because the recipient cannot insert a row
+    // where user_id = senderId (auth.uid() !== senderId).
+    const { error: rpcErr } = await supabase.rpc("accept_friend_request", {
+      p_sender_id: opts.senderId,
+      p_recipient_id: opts.recipientId,
+    });
+    if (rpcErr) throw rpcErr;
 
     // Notify the original sender that their request was accepted.
     const acceptor = await getProfile(opts.recipientId);
-    await supabase.from("notifications").insert({
-      recipient_id: opts.senderId,
-      sender_id: opts.recipientId,
-      type: "friend_request",
-      status: "accepted",
-      message: `accepted your friend request`,
-      sender_username: acceptor?.username ?? null,
-    });
+    try {
+      await supabase.from("notifications").insert({
+        recipient_id: opts.senderId,
+        sender_id: opts.recipientId,
+        type: "friend_request",
+        status: "accepted",
+        message: `accepted your friend request`,
+        sender_username: acceptor?.username ?? null,
+      });
+    } catch {
+      // Non-fatal
+    }
   } else {
     // Declined: delete the friend request row.
     await supabase
@@ -1160,12 +1186,24 @@ export async function respondToFriendRequest(opts: {
       .eq("recipient_id", opts.recipientId);
   }
 
+
   // Update the notification status.
-  const { error: nErr } = await supabase
-    .from("notifications")
-    .update({ status: opts.accept ? "accepted" : "declined" })
-    .eq("id", opts.notificationId);
-  if (nErr) console.warn("Could not update friend request notification:", nErr.message);
+  if (opts.notificationId && !opts.notificationId.startsWith("fr-")) {
+    const { error: nErr } = await supabase
+      .from("notifications")
+      .update({ status: opts.accept ? "accepted" : "declined" })
+      .eq("id", opts.notificationId);
+    if (nErr) console.warn("Could not update friend request notification:", nErr.message);
+  } else {
+    // Also mark any matching notification as handled
+    await supabase
+      .from("notifications")
+      .update({ status: opts.accept ? "accepted" : "declined" })
+      .eq("recipient_id", opts.recipientId)
+      .eq("sender_id", opts.senderId)
+      .eq("type", "friend_request")
+      .eq("status", "pending");
+  }
 }
 
 /** Get the current user's friends with their profile data. */

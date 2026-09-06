@@ -27,20 +27,63 @@ export interface SyncQueueItem {
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+const FAST_CACHE_PREFIX = "splity_fast_cache:";
+
 // ─────────────────────────────────────────────────────────────────────────────
-// In-memory warm cache: populated on first IndexedDB read so that subsequent
-// synchronous reads (for React Query placeholderData) don't need an async IDB
-// round-trip. This is module-level state — safe for the lifetime of the page.
+// In-memory warm cache: populated on startup from localStorage and on IDB reads.
+// Provides synchronous (0ms) reads for React Query placeholderData on app restart.
 // ─────────────────────────────────────────────────────────────────────────────
 const warmCache = new Map<string, { data: any; updatedAt: number }>();
 
+// Synchronously hydrate warmCache from localStorage on module evaluation
+if (typeof window !== "undefined" && window.localStorage) {
+  try {
+    const now = Date.now();
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const storageKey = window.localStorage.key(i);
+      if (storageKey && storageKey.startsWith(FAST_CACHE_PREFIX)) {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw) {
+          const entry = JSON.parse(raw);
+          if (now - entry.updatedAt <= RETENTION_MS) {
+            const cacheKey = storageKey.slice(FAST_CACHE_PREFIX.length);
+            warmCache.set(cacheKey, entry);
+          } else {
+            window.localStorage.removeItem(storageKey);
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore localStorage errors (e.g. private browsing restrictions)
+  }
+}
+
 /**
- * Synchronous read from the in-memory warm cache populated by previous
- * `getCachedData` calls. Returns `undefined` if the key has never been read
- * from IndexedDB in this page session, or if the 3-month TTL has passed.
+ * Synchronous read from the in-memory warm cache (or localStorage fallback).
+ * Returns `undefined` if key has never been cached or if the 3-month TTL expired.
  */
 export function getWarmCache<T>(key: string): T | undefined {
-  const entry = warmCache.get(key);
+  let entry = warmCache.get(key);
+
+  // If missing in memory, check localStorage synchronously
+  if (!entry && typeof window !== "undefined" && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(FAST_CACHE_PREFIX + key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Date.now() - parsed.updatedAt <= RETENTION_MS) {
+          warmCache.set(key, parsed);
+          entry = parsed;
+        } else {
+          window.localStorage.removeItem(FAST_CACHE_PREFIX + key);
+        }
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+  }
+
   if (!entry) return undefined;
   if (Date.now() - entry.updatedAt > RETENTION_MS) {
     warmCache.delete(key);
@@ -86,6 +129,20 @@ export async function setCachedData<T>(key: string, data: T): Promise<void> {
     const now = Date.now();
     // Keep warm cache in sync immediately so subsequent synchronous reads are fresh
     warmCache.set(key, { data, updatedAt: now });
+
+    // Mirror to synchronous localStorage fast cache for instant restoration on restart
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const payload = JSON.stringify({ data, updatedAt: now });
+        // Prevent storing huge blobs in localStorage; typical summaries are 1-20KB
+        if (payload.length < 500_000) {
+          window.localStorage.setItem(FAST_CACHE_PREFIX + key, payload);
+        }
+      } catch {
+        // Fail silently if quota exceeded or disabled
+      }
+    }
+
     const db = await getDb();
     const tx = db.transaction(CACHE_STORE, "readwrite");
     const store = tx.objectStore(CACHE_STORE);
@@ -125,8 +182,17 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
       return null;
     }
 
-    // Populate warm cache so getWarmCache() can serve synchronous reads
+    // Populate warm cache and localStorage so getWarmCache() can serve synchronous reads
     warmCache.set(key, { data: result.data, updatedAt: result.updatedAt });
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const payload = JSON.stringify({ data: result.data, updatedAt: result.updatedAt });
+        if (payload.length < 500_000) {
+          window.localStorage.setItem(FAST_CACHE_PREFIX + key, payload);
+        }
+      } catch {}
+    }
+
     return result.data;
   } catch (err) {
     console.warn("[IndexedDB] Failed to read cache:", key, err);
@@ -136,6 +202,12 @@ export async function getCachedData<T>(key: string): Promise<T | null> {
 
 export async function deleteCachedData(key: string): Promise<void> {
   try {
+    warmCache.delete(key);
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        window.localStorage.removeItem(FAST_CACHE_PREFIX + key);
+      } catch {}
+    }
     const db = await getDb();
     const tx = db.transaction(CACHE_STORE, "readwrite");
     tx.objectStore(CACHE_STORE).delete(key);

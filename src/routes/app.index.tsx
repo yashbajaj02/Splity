@@ -103,6 +103,8 @@ function GroupsHome() {
     [settleQuery.data],
   );
 
+  const isBalanceLoading = settleQuery.isLoading && !settleQuery.data;
+
   const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return groups;
@@ -148,7 +150,11 @@ function GroupsHome() {
         </div>
 
         {/* Interactive Balance Card with Wave & State Switcher */}
-        <BalanceCard totalOwe={totalOwe} totalOwed={totalOwed} />
+        <BalanceCard
+          totalOwe={totalOwe}
+          totalOwed={totalOwed}
+          isLoading={isBalanceLoading}
+        />
 
         {/* Search bar */}
         <div className="relative">

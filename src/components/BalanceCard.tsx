@@ -5,11 +5,30 @@ import { cn } from "@/lib/utils";
 export function BalanceCard({
   totalOwe,
   totalOwed,
+  isLoading = false,
 }: {
   totalOwe: number;
   totalOwed: number;
+  isLoading?: boolean;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+
+  if (isLoading) {
+    return (
+      <div
+        className="w-full h-[148px] rounded-3xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-slate-100/40 to-slate-100/60 p-5 flex flex-col justify-between overflow-hidden shadow-[0_2px_12px_rgba(15,23,42,0.04)] animate-pulse select-none"
+      >
+        <div>
+          <div className="h-3.5 w-32 rounded-md bg-slate-200/80" />
+          <div className="mt-3 h-8 w-28 rounded-lg bg-slate-200/90" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-slate-300" />
+          <div className="h-3.5 w-24 rounded-md bg-slate-200/80" />
+        </div>
+      </div>
+    );
+  }
 
   // Net balance logic as requested:
   // Net = Total amount I owe - Total amount owed to me

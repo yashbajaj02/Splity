@@ -47,6 +47,45 @@ export function useSupabaseRealtime(userId: string | undefined) {
           queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friend_requests",
+          filter: `recipient_id=eq.${userId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["friend-requests", userId] });
+          queryClient.invalidateQueries({ queryKey: ["notifications", userId] });
+          queryClient.invalidateQueries({ queryKey: ["friends", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friend_requests",
+          filter: `sender_id=eq.${userId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["friend-requests", userId] });
+          queryClient.invalidateQueries({ queryKey: ["friends", userId] });
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "friends",
+          filter: `user_id=eq.${userId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["friends", userId] });
+        },
+      )
       .on("postgres_changes", { event: "*", schema: "public", table: "expense_splits" }, () => {
         queryClient.invalidateQueries({ queryKey: ["group-splits"] });
         queryClient.invalidateQueries({ queryKey: ["settle", userId] });
