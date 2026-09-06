@@ -791,7 +791,7 @@ function FriendRequestsModal({
                       type="button"
                       disabled={busy}
                       onClick={() => onAccept(req)}
-                      className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                      className="h-11 px-4 rounded-2xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all active:scale-95"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Accept</span>
@@ -800,7 +800,7 @@ function FriendRequestsModal({
                       type="button"
                       disabled={busy}
                       onClick={() => onDecline(req)}
-                      className="px-2.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                      className="h-11 px-4 rounded-2xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all active:scale-95"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -1556,12 +1556,22 @@ const NotificationCard = memo(function NotificationCard({
 
           {(isInvite || isFriendRequest) && pending && !isSenderCurrentUser ? (
             <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-              <Button size="sm" onClick={onAccept} disabled={busy}>
+              <button
+                type="button"
+                onClick={onAccept}
+                disabled={busy}
+                className="h-11 px-4 rounded-2xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all active:scale-95"
+              >
                 <Check className="mr-1 h-4 w-4" /> Accept
-              </Button>
-              <Button size="sm" variant="outline" onClick={onDecline} disabled={busy}>
+              </button>
+              <button
+                type="button"
+                onClick={onDecline}
+                disabled={busy}
+                className="h-11 px-4 rounded-2xl bg-white border border-slate-200/90 hover:bg-slate-50 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all active:scale-95"
+              >
                 <X className="mr-1 h-4 w-4" /> Decline
-              </Button>
+              </button>
             </div>
           ) : (
             <div className="mt-2.5 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
