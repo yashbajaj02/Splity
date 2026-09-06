@@ -1501,8 +1501,8 @@ const NotificationCard = memo(function NotificationCard({
   }
 
   const handleCardClick = () => {
-    if (isInvite) {
-      // Do not navigate automatically for invites on Activity page
+    if (isInvite || isFriendRequest) {
+      // Do not open details sheet for invites or friend requests
       return;
     }
     if (counterpartyId) {
