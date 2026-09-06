@@ -4,17 +4,15 @@ import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 import { nitro } from "nitro/vite";
-import { execSync } from "child_process";
 import fs from "fs";
 
-let appVersion = "v1.0.0";
+let appVersion = "v1.0.3";
 try {
   const packageJson = JSON.parse(fs.readFileSync("./package.json", "utf-8"));
-  const commitHash = execSync("git rev-parse --short HEAD").toString().trim();
-  const v = packageJson.version || "1.0.0";
-  appVersion = `v${v}-${commitHash}`;
+  const v = packageJson.version || "1.0.3";
+  appVersion = `v${v}`;
 } catch (e) {
-  console.warn("Could not determine app version from git/package.json");
+  console.warn("Could not determine app version from package.json");
 }
 
 export default defineConfig(({ command }) => ({
