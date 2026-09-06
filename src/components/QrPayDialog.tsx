@@ -42,6 +42,7 @@ export function QrPayDialog({
   counterpartyId,
   groupId,
   onSelectionChange,
+  trigger,
 }: {
   payeeName: string;
   payeeUpiId: string | null;
@@ -52,6 +53,7 @@ export function QrPayDialog({
   counterpartyId?: string;
   groupId?: string;
   onSelectionChange?: (selected: Record<string, number> | undefined) => void;
+  trigger?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [savedDialogOpen, setSavedDialogOpen] = useState(false);
@@ -192,15 +194,21 @@ export function QrPayDialog({
 
   return (
     <>
-      <Button
-        size="sm"
-        id={`qr-pay-trigger-${payeeName}`}
-        className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
-        onClick={() => setOpen(true)}
-      >
-        <Camera className="h-4 w-4" />
-        Pay
-      </Button>
+      {trigger ? (
+        <span onClick={() => setOpen(true)} className="contents cursor-pointer">
+          {trigger}
+        </span>
+      ) : (
+        <Button
+          size="sm"
+          id={`qr-pay-trigger-${payeeName}`}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+          onClick={() => setOpen(true)}
+        >
+          <Camera className="h-4 w-4" />
+          Pay
+        </Button>
+      )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-sm rounded-2xl p-0 gap-0 overflow-hidden">

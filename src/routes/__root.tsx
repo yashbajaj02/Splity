@@ -48,6 +48,13 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         <p className="mt-2 text-sm text-muted-foreground">
           Something went wrong on our end. You can try refreshing or head back home.
         </p>
+        {error && (
+          <pre className="mt-3 p-3 bg-red-50 text-red-600 rounded-xl text-xs overflow-x-auto text-left font-mono">
+            {error.message || String(error)}
+            {"\n"}
+            {error.stack}
+          </pre>
+        )}
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
@@ -74,7 +81,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { name: "viewport", content: "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" },
       { title: "Splity — Smart Expense Sharing" },
       {
         name: "description",
@@ -120,6 +127,11 @@ function RootShell({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(localStorage.getItem('splity-reduce-motion')==='true'){document.documentElement.classList.add('reduce-motion');}}catch(e){}})();`,
+          }}
+        />
         {children}
         <Scripts />
         <script

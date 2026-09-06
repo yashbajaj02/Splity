@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Loader2, X, Check } from "lucide-react";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 import {
   Drawer,
   DrawerContent,
@@ -11,7 +13,8 @@ import {
 import { getMyGroups, getGroupExpenses, getSplitsForGroup, getProfilesByIds } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
 import { computePairwiseLedger } from "@/lib/ledger";
-import { CountUpCurrency } from "@/components/CountUpCurrency";
+import { QrPayDialog } from "@/components/QrPayDialog";
+import { PaidDialog } from "@/components/PaidDialog";
 
 function getExpenseIcon(description: string): string {
   const desc = description.toLowerCase();
@@ -91,7 +94,7 @@ function getExpenseIcon(description: string): string {
   return "🧾";
 }
 
-interface ExpenseBreakdownSheetProps {
+export interface ExpenseBreakdownSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentUserId: string;
@@ -99,6 +102,12 @@ interface ExpenseBreakdownSheetProps {
   displayName: string;
   groupName?: string | null;
   balanceAmount: number;
+  negative?: boolean;
+  groupId?: string | null;
+  payeeUpiId?: string | null;
+  onRemind?: () => void;
+  remindBusy?: boolean;
+  remindSent?: boolean;
 }
 
 export function ExpenseBreakdownSheet({
@@ -109,6 +118,12 @@ export function ExpenseBreakdownSheet({
   displayName,
   groupName,
   balanceAmount,
+  negative,
+  groupId,
+  payeeUpiId,
+  onRemind,
+  remindBusy,
+  remindSent,
 }: ExpenseBreakdownSheetProps) {
   const { data, isLoading } = useQuery({
     queryKey: ["expense-breakdown", currentUserId, counterpartyId],
@@ -142,50 +157,109 @@ export function ExpenseBreakdownSheet({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
-      <DrawerContent className="max-w-md mx-auto max-h-[85vh] rounded-t-[24px]">
-        <DrawerHeader className="px-6 pt-2 pb-4 text-left border-b border-border/50">
-          <div className="flex items-start justify-between gap-4">
+      <DrawerContent className="max-w-md mx-auto max-h-[88vh] rounded-t-[28px] overflow-hidden flex flex-col p-0 bg-white">
+        {/* Header Pinned At Top */}
+        <DrawerHeader className="px-6 pt-5 pb-4 text-left border-b border-slate-100 shrink-0">
+          <div className="flex items-center justify-between gap-3 w-full">
             <div className="min-w-0 flex-1">
-              <DrawerTitle className="font-display text-xl font-bold truncate">
+              <DrawerTitle className="font-display text-xl font-bold text-slate-900 truncate">
                 {displayName}
               </DrawerTitle>
               {groupName && (
-                <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[240px]">
+                <p className="text-xs text-slate-400 font-medium mt-0.5 truncate max-w-[220px]">
                   {groupName}
                 </p>
               )}
             </div>
-            <div className="text-right shrink-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Current Balance
-              </p>
-              <p className="text-lg font-display font-bold text-primary mt-0.5">
-                <CountUpCurrency amount={balanceAmount} />
-              </p>
+
+            {/* Top Action Buttons (Remind for positive, Pay/Paid for negative) */}
+            <div className="flex items-center gap-2 shrink-0">
+              {negative ? (
+                <>
+                  {/* 1. Pay Button -> connects to existing UPI/Cash QrPayDialog */}
+                  <QrPayDialog
+                    payeeName={displayName}
+                    payeeUpiId={payeeUpiId ?? profileMap.get(counterpartyId)?.upi_id ?? null}
+                    amount={balanceAmount}
+                    note="Splity settlement"
+                    currentUserId={currentUserId}
+                    counterpartyId={counterpartyId}
+                    groupId={groupId ?? undefined}
+                    trigger={
+                      <button
+                        type="button"
+                        className="px-4 py-1.5 rounded-full bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-xs transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-md animate-settle-glow flex items-center gap-1.5"
+                      >
+                        <span>Pay</span>
+                      </button>
+                    }
+                  />
+                  {/* 2. Paid Button -> connects to existing PaidDialog */}
+                  <PaidDialog
+                    payeeName={displayName}
+                    groupName={groupName ?? undefined}
+                    amount={balanceAmount}
+                    groupId={groupId ?? null}
+                    payeeId={counterpartyId}
+                    payerId={currentUserId}
+                    trigger={
+                      <button
+                        type="button"
+                        className="px-4 py-1.5 rounded-full bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200/80 transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-xs flex items-center gap-1.5"
+                      >
+                        <span>Paid</span>
+                      </button>
+                    }
+                  />
+                </>
+              ) : (
+                /* Remind Button -> connects to existing reminder flow */
+                <button
+                  type="button"
+                  disabled={remindBusy || remindSent}
+                  onClick={onRemind}
+                  className={cn(
+                    "px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] flex items-center gap-1.5",
+                    remindSent
+                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-default"
+                      : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs hover:shadow-md",
+                  )}
+                >
+                  {remindSent ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>Sent</span>
+                    </>
+                  ) : (
+                    <span>Remind</span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </DrawerHeader>
 
-        <div className="p-6 overflow-y-auto space-y-4">
+        {/* Scrollable Expense History */}
+        <div className="p-5 overflow-y-auto space-y-4 flex-1">
           <div className="flex items-center gap-3">
-            <div className="h-px flex-1 bg-border/60" />
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+            <div className="h-px flex-1 bg-slate-100" />
+            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 whitespace-nowrap">
               Since Last Settlement
             </span>
-            <div className="h-px flex-1 bg-border/60" />
+            <div className="h-px flex-1 bg-slate-100" />
           </div>
 
           {isLoading ? (
             <div className="flex justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
             </div>
           ) : ledgerItems.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+            <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-xs text-slate-400 font-medium">
               No new expenses since last settlement.
             </div>
           ) : (
             <div className="space-y-2.5">
-              {ledgerItems.map((item) => {
+              {ledgerItems.map((item, index) => {
                 let addedBy = "You";
                 if (item.paidBy === counterpartyId) {
                   const p = profileMap.get(counterpartyId);
@@ -197,23 +271,33 @@ export function ExpenseBreakdownSheet({
 
                 const isPaidByMe = item.paidBy === currentUserId;
                 const cardStyle = isPaidByMe
-                  ? "bg-[rgba(16,185,129,0.06)] border-[rgba(16,185,129,0.15)] hover:bg-[rgba(16,185,129,0.10)]"
-                  : "bg-[rgba(239,68,68,0.06)] border-[rgba(239,68,68,0.15)] hover:bg-[rgba(239,68,68,0.10)]";
+                  ? "bg-emerald-50/50 border-emerald-100/80 hover:bg-emerald-100/70 hover:border-emerald-300/80"
+                  : "bg-rose-50/50 border-rose-100/80 hover:bg-rose-100/70 hover:border-rose-300/80";
 
                 return (
-                  <div
+                  <motion.div
                     key={item.id}
-                    className={`flex items-center justify-between p-3.5 rounded-xl border transition-colors ${cardStyle}`}
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    transition={{
+                      duration: 0.22,
+                      delay: Math.min(index * 0.04, 0.25),
+                      ease: "easeOut",
+                    }}
+                    className={cn(
+                      "flex items-center justify-between p-3.5 rounded-2xl border transition-all duration-150 select-none hover:-translate-y-0.5 hover:shadow-xs cursor-pointer",
+                      cardStyle,
+                    )}
                   >
                     <div className="flex items-center gap-3 min-w-0 flex-1">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-lg">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white border border-slate-100 text-base shadow-2xs">
                         {getExpenseIcon(item.cleanDescription)}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-sm truncate text-foreground">
+                        <p className="font-bold text-xs sm:text-sm truncate text-slate-900">
                           {item.cleanDescription}
                         </p>
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
+                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400 font-medium mt-0.5">
                           <span>
                             {item.isSettlement
                               ? isPaidByMe
@@ -227,37 +311,66 @@ export function ExpenseBreakdownSheet({
                       </div>
                     </div>
                     <div className="text-right shrink-0 ml-3">
-                      <p className="text-xs text-muted-foreground">
-                        {item.isSettlement ? "Settlement" : `Total Bill ₹${item.amount.toFixed(2)}`}
+                      <p className="text-[11px] text-slate-400 font-medium">
+                        {item.isSettlement ? "Settlement" : `Total ₹${item.amount.toFixed(2)}`}
                       </p>
-                      <p className="text-sm font-semibold text-foreground mt-0.5">
+                      <p
+                        className={cn(
+                          "text-xs sm:text-sm font-display font-bold mt-0.5",
+                          isPaidByMe ? "text-emerald-600" : "text-rose-600",
+                        )}
+                      >
                         {item.isSettlement
                           ? `₹${item.amount.toFixed(2)}`
-                          : `Your Share ₹${item.yourShare.toFixed(2)}`}
+                          : `Your share ₹${item.yourShare.toFixed(2)}`}
                       </p>
                     </div>
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
           )}
         </div>
 
-        <DrawerFooter className="border-t border-border/50 px-6 py-4 bg-card/40">
+        {/* Fixed Remaining Amount At Bottom */}
+        <DrawerFooter className="border-t border-slate-100 px-5 py-3.5 bg-slate-50/60 shrink-0">
           <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
-              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Expenses</p>
-              <p className="text-base font-bold font-display mt-0.5">{expensesCount}</p>
+            <div className="bg-white p-2.5 rounded-2xl border border-slate-200/70 shadow-2xs">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Expenses</p>
+              <p className="text-sm sm:text-base font-bold font-display text-slate-800 mt-0.5">
+                {expensesCount}
+              </p>
             </div>
-            <div className="bg-secondary/40 p-2.5 rounded-xl border border-border/40">
-              <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+            <div className="bg-white p-2.5 rounded-2xl border border-slate-200/70 shadow-2xs">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 Total Shared
               </p>
-              <p className="text-base font-bold font-display mt-0.5">₹{totalShared.toFixed(2)}</p>
+              <p className="text-sm sm:text-base font-bold font-display text-slate-800 mt-0.5">
+                ₹{totalShared.toFixed(2)}
+              </p>
             </div>
-            <div className="bg-primary/10 p-2.5 rounded-xl border border-primary/20">
-              <p className="text-[10px] font-semibold uppercase text-primary">Remaining</p>
-              <p className="text-base font-bold font-display text-primary mt-0.5">
+            <div
+              className={cn(
+                "p-2.5 rounded-2xl border shadow-2xs",
+                negative
+                  ? "bg-rose-50 border-rose-200 text-rose-700"
+                  : "bg-emerald-50 border-emerald-200 text-emerald-700",
+              )}
+            >
+              <p
+                className={cn(
+                  "text-[10px] font-bold uppercase tracking-wider",
+                  negative ? "text-rose-500" : "text-emerald-600",
+                )}
+              >
+                Remaining
+              </p>
+              <p
+                className={cn(
+                  "text-sm sm:text-base font-bold font-display mt-0.5",
+                  negative ? "text-rose-600" : "text-emerald-600",
+                )}
+              >
                 ₹{balanceAmount.toFixed(2)}
               </p>
             </div>

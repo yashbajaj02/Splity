@@ -1,4 +1,4 @@
-import { getCleanErrorMessage } from "@/lib/utils";
+import { getCleanErrorMessage, getInitials } from "@/lib/utils";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
   DialogContent,
@@ -25,7 +26,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-type Member = { id: string; name: string };
+type Member = { id: string; name: string; avatar_url?: string | null };
 
 export function AddExpenseDialog({
   userId,
@@ -96,6 +97,7 @@ export function AddExpenseDialog({
       return fixedMembers.map((m) => ({
         id: m.id,
         name: getCleanMemberName(m.name),
+        avatar_url: m.avatar_url || null,
       }));
     }
     const pmap = new Map((profilesQuery.data ?? []).map((p) => [p.id, p]));
@@ -112,6 +114,7 @@ export function AddExpenseDialog({
         return {
           id: m.user_id,
           name: m.user_id === userId ? "You" : displayName,
+          avatar_url: p?.avatar_url || null,
         };
       });
   }, [fixedMembers, membersQuery.data, profilesQuery.data, userId]);
@@ -323,12 +326,14 @@ export function AddExpenseDialog({
       }}
     >
       {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
-      <DialogContent className="p-0 gap-0">
-        <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
-          <DialogTitle>{mode === "edit" ? "Edit expense" : "Add an expense"}</DialogTitle>
+      <DialogContent className="p-0 gap-0 max-w-md rounded-3xl overflow-hidden border-slate-100 shadow-2xl">
+        <DialogHeader className="px-6 py-4 border-b border-slate-100 shrink-0">
+          <DialogTitle className="font-display text-lg font-bold text-slate-900">
+            {mode === "edit" ? "Edit Expense" : "Add an Expense"}
+          </DialogTitle>
         </DialogHeader>
         <form
-          className="space-y-4 p-6 flex-1 overflow-y-auto"
+          className="space-y-4 p-6 flex-1 overflow-y-auto max-h-[80vh]"
           onSubmit={(e) => {
             e.preventDefault();
             mutation.mutate();
@@ -336,11 +341,11 @@ export function AddExpenseDialog({
         >
           {needsGroupPicker && (
             <div className="space-y-1.5">
-              <Label>Group</Label>
+              <label className="text-xs font-semibold text-slate-600">Group</label>
               <select
                 value={selectedGroupId}
                 onChange={(e) => setSelectedGroupId(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="flex h-10 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none"
                 required
               >
                 {groups!.map((g) => (
@@ -353,16 +358,17 @@ export function AddExpenseDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label>Description</Label>
+            <label className="text-xs font-semibold text-slate-600">Description</label>
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Dinner, cab, groceries..."
               required
+              className="rounded-xl border-slate-200"
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Amount (₹)</Label>
+            <label className="text-xs font-semibold text-slate-600">Amount (₹)</label>
             <Input
               type="number"
               inputMode="decimal"
@@ -372,68 +378,42 @@ export function AddExpenseDialog({
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
               required
+              className="rounded-xl border-slate-200 text-lg font-bold"
             />
           </div>
 
           {isLoadingMembers ? (
             <div className="flex justify-center py-4">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <Loader2 className="h-5 w-5 animate-spin text-emerald-600" />
             </div>
           ) : members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No members in this group yet.</p>
+            <p className="text-sm text-slate-400">No members in this group yet.</p>
           ) : (
             <>
               <div className="space-y-1.5">
-                <Label>Paid by</Label>
-                <div className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-secondary/40 px-3 py-2 text-sm font-medium text-foreground">
-                  <span>👤</span>
+                <label className="text-xs font-semibold text-slate-600">Paid by</label>
+                <div className="flex h-10 w-full items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800">
+                  <Avatar className="w-6 h-6 rounded-full shrink-0 shadow-2xs">
+                    <AvatarImage src={members.find((m) => m.id === userId)?.avatar_url || undefined} alt="You" />
+                    <AvatarFallback className="bg-emerald-100 text-emerald-700 font-bold text-[10px]">
+                      {getInitials(members.find((m) => m.id === userId)?.name || "You", "U")}
+                    </AvatarFallback>
+                  </Avatar>
                   <span>{members.find((m) => m.id === userId)?.name || "You"}</span>
                 </div>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>
-                    {splitMode === "equal"
-                      ? "Split equally between"
-                      : splitMode === "amount"
-                        ? "Split by exact amount between"
-                        : "Split by percentage between"}
-                  </Label>
-                  <button
-                    type="button"
-                    onClick={toggleAll}
-                    className="text-xs font-medium text-primary hover:underline"
-                  >
-                    {allSelected ? "Deselect all" : "Select all"}
-                  </button>
-                </div>
-                <div className="max-h-36 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
-                  {members.map((m) => (
-                    <label
-                      key={m.id}
-                      className="flex cursor-pointer items-center gap-2 text-sm select-none"
-                    >
-                      <Checkbox
-                        checked={participants.includes(m.id)}
-                        onCheckedChange={() => toggle(m.id)}
-                      />
-                      <span className="truncate">{m.name}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
 
-              {/* Segmented Control */}
+              {/* Screen 5: Split Method Tabs (Equal / Amount / Percentage) */}
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground font-medium">Split Method</Label>
-                <div className="grid grid-cols-3 gap-1 rounded-xl bg-secondary/60 p-1 border border-border/50 text-xs font-medium">
+                <label className="text-xs font-semibold text-slate-600">Split Method</label>
+                <div className="grid grid-cols-3 gap-1 rounded-2xl bg-slate-100 p-1 text-xs font-semibold">
                   <button
                     type="button"
                     onClick={() => handleSetSplitMode("equal")}
-                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                    className={`rounded-xl py-2 px-3 transition-all duration-200 cursor-pointer ${
                       splitMode === "equal"
-                        ? "bg-background text-foreground shadow-xs font-semibold"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-emerald-600 text-white shadow-xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     Equal
@@ -441,10 +421,10 @@ export function AddExpenseDialog({
                   <button
                     type="button"
                     onClick={() => handleSetSplitMode("amount")}
-                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                    className={`rounded-xl py-2 px-3 transition-all duration-200 cursor-pointer ${
                       splitMode === "amount"
-                        ? "bg-background text-foreground shadow-xs font-semibold"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-emerald-600 text-white shadow-xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     Amount
@@ -452,14 +432,53 @@ export function AddExpenseDialog({
                   <button
                     type="button"
                     onClick={() => handleSetSplitMode("percentage")}
-                    className={`rounded-lg py-1.5 px-3 transition-all duration-200 cursor-pointer ${
+                    className={`rounded-xl py-2 px-3 transition-all duration-200 cursor-pointer ${
                       splitMode === "percentage"
-                        ? "bg-background text-foreground shadow-xs font-semibold"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-emerald-600 text-white shadow-xs font-bold"
+                        : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     Percentage
                   </button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-slate-600">
+                    {splitMode === "equal"
+                      ? "Split equally between"
+                      : splitMode === "amount"
+                        ? "Split by exact amount between"
+                        : "Split by percentage between"}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={toggleAll}
+                    className="text-xs font-bold text-emerald-600 hover:underline"
+                  >
+                    {allSelected ? "Deselect all" : "Select all"}
+                  </button>
+                </div>
+                <div className="max-h-36 space-y-1.5 overflow-y-auto rounded-2xl border border-slate-200 p-2.5">
+                  {members.map((m) => (
+                    <label
+                      key={m.id}
+                      className="flex cursor-pointer items-center gap-2.5 text-sm select-none font-medium text-slate-700 p-1.5 rounded-xl hover:bg-slate-50 transition-colors"
+                    >
+                      <Checkbox
+                        checked={participants.includes(m.id)}
+                        onCheckedChange={() => toggle(m.id)}
+                      />
+                      <Avatar className="w-6 h-6 rounded-full shrink-0 shadow-2xs">
+                        <AvatarImage src={m.avatar_url || undefined} alt={m.name} />
+                        <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                          {getInitials(m.name, "U")}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="truncate">{m.name}</span>
+                    </label>
+                  ))}
                 </div>
               </div>
 
@@ -501,9 +520,17 @@ export function AddExpenseDialog({
                             className="space-y-1.5 rounded-xl bg-secondary/30 p-2.5 border border-border/50"
                           >
                             <div className="flex items-center justify-between gap-3">
-                              <span className="text-sm font-medium truncate flex-1">
-                                {displayName}
-                              </span>
+                              <div className="flex items-center gap-2 min-w-0 flex-1">
+                                <Avatar className="w-5 h-5 rounded-full shrink-0 shadow-2xs">
+                                  <AvatarImage src={m?.avatar_url || undefined} alt={displayName} />
+                                  <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[9px]">
+                                    {getInitials(displayName, "U")}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className="text-sm font-medium truncate">
+                                  {displayName}
+                                </span>
+                              </div>
                               <div className="relative w-28 shrink-0">
                                 <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium">
                                   ₹
@@ -581,11 +608,19 @@ export function AddExpenseDialog({
 
                         return (
                           <div key={pid} className="flex items-center justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium truncate">{m?.name || "Member"}</p>
-                              <p className="text-[11px] text-muted-foreground">
-                                ₹{calculatedAmt.toFixed(2)}
-                              </p>
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <Avatar className="w-5 h-5 rounded-full shrink-0 shadow-2xs">
+                                <AvatarImage src={m?.avatar_url || undefined} alt={m?.name || "Member"} />
+                                <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[9px]">
+                                  {getInitials(m?.name || "Member", "U")}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium truncate">{m?.name || "Member"}</p>
+                                <p className="text-[11px] text-muted-foreground">
+                                  ₹{calculatedAmt.toFixed(2)}
+                                </p>
+                              </div>
                             </div>
                             <div className="relative w-24 shrink-0">
                               <Input
@@ -649,12 +684,19 @@ export function AddExpenseFab({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 active:scale-95"
+        className="fixed bottom-20 right-4 z-20 flex h-12 items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 shadow-xl transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-2xl text-xs font-bold"
         aria-label="Add expense"
       >
-        <Plus className="h-7 w-7" />
+        <Plus className="h-4 w-4 stroke-[3]" />
+        <span>Add Expense</span>
       </button>
-      <AddExpenseDialog userId={userId} groups={groups} open={open} onOpenChange={setOpen} />
+
+      <AddExpenseDialog
+        userId={userId}
+        groups={groups}
+        open={open}
+        onOpenChange={setOpen}
+      />
     </>
   );
 }

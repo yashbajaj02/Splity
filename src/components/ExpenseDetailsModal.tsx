@@ -23,6 +23,8 @@ import {
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, Profile } from "@/lib/app-types";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { getInitials } from "@/lib/utils";
 
 interface ExpenseDetailsModalProps {
   open: boolean;
@@ -301,9 +303,12 @@ export function ExpenseDetailsModal({
                 </h3>
                 <div className="flex items-center justify-between p-3 rounded-xl border border-border/60 bg-card">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-xs uppercase">
-                      {paidByName.slice(0, 2).toUpperCase()}
-                    </div>
+                    <Avatar className="h-9 w-9 shrink-0 shadow-2xs">
+                      <AvatarImage src={profileMap.get(expense.paid_by)?.avatar_url || undefined} alt={paidByName} />
+                      <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs uppercase">
+                        {getInitials(paidByName, "U")}
+                      </AvatarFallback>
+                    </Avatar>
                     <div className="min-w-0">
                       <p className="font-semibold text-sm text-foreground truncate">{paidByName}</p>
                       {paidByUsername && (
@@ -373,11 +378,14 @@ export function ExpenseDetailsModal({
                           {/* Desktop Layout (3-column) */}
                           <div className="hidden sm:grid sm:grid-cols-3 sm:gap-4 sm:items-center">
                             <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
-                              >
-                                {memberName.slice(0, 2).toUpperCase()}
-                              </div>
+                              <Avatar className="h-8 w-8 shrink-0 shadow-2xs">
+                                <AvatarImage src={memberProfile?.avatar_url || undefined} alt={memberName} />
+                                <AvatarFallback
+                                  className={`text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
+                                >
+                                  {getInitials(memberName, "U")}
+                                </AvatarFallback>
+                              </Avatar>
                               <div className="min-w-0">
                                 <p className="font-medium text-sm text-foreground truncate">
                                   {memberName}{" "}
@@ -425,11 +433,14 @@ export function ExpenseDetailsModal({
                           <div className="sm:hidden space-y-2">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3 min-w-0">
-                                <div
-                                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
-                                >
-                                  {memberName.slice(0, 2).toUpperCase()}
-                                </div>
+                                <Avatar className="h-8 w-8 shrink-0 shadow-2xs">
+                                  <AvatarImage src={memberProfile?.avatar_url || undefined} alt={memberName} />
+                                  <AvatarFallback
+                                    className={`text-xs font-bold uppercase ${isMe ? "bg-primary text-primary-foreground" : "bg-secondary text-foreground"}`}
+                                  >
+                                    {getInitials(memberName, "U")}
+                                  </AvatarFallback>
+                                </Avatar>
                                 <div className="min-w-0">
                                   <p className="font-medium text-sm text-foreground truncate">
                                     {memberName}{" "}

@@ -3,10 +3,42 @@ import type {
   AppNotification,
   Expense,
   ExpenseSplit,
+  Friend,
+  FriendRequest,
+  FriendRequestStatus,
   Group,
   GroupMember,
+  MemberStatus,
   Profile,
+  GroupMessage,
+  UserSearchResult,
 } from "./app-types";
+import {
+  getCachedData,
+  setCachedData,
+  enqueueSyncAction,
+  type SyncQueueItem,
+} from "./offline-db";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLOUDINARY UPLOAD HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+export async function uploadToCloudinary(file: File, folder: string): Promise<string> {
+  const CLOUDINARY_URL = "https://api.cloudinary.com/v1_1/atc7jukt/image/upload";
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", "splity_upload");
+  formData.append("folder", folder);
+
+  const res = await fetch(CLOUDINARY_URL, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || "Failed to upload image.");
+  }
+  const data = await res.json();
+  return data.secure_url;
+}
+
 import { computePairwiseDebts } from "./debt";
 
 const EXPENSE_DELETE_WINDOW_MS = 5 * 60 * 60 * 1000;
@@ -47,18 +79,26 @@ function buildExpenseAddedMessage(opts: {
 /* ------------------------------- PROFILES ------------------------------- */
 
 export async function getProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", userId)
-    .maybeSingle();
-  if (error) throw error;
-  return data as Profile | null;
+  const cacheKey = `profile:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (data) setCachedData(cacheKey, data).catch(() => {});
+    return data as Profile | null;
+  } catch (err) {
+    const cached = await getCachedData<Profile>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function updateProfile(
   userId: string,
-  patch: Partial<Pick<Profile, "username" | "upi_id" | "full_name" | "email">>,
+  patch: Partial<Pick<Profile, "username" | "upi_id" | "full_name" | "email" | "avatar_url">>,
 ): Promise<Profile> {
   const { data, error } = await supabase
     .from("profiles")
@@ -66,6 +106,7 @@ export async function updateProfile(
     .select("*")
     .single();
   if (error) throw error;
+  if (data) setCachedData(`profile:${userId}`, data).catch(() => {});
   return data as Profile;
 }
 
@@ -86,27 +127,37 @@ export async function findUserByUsername(username: string) {
 /* -------------------------------- GROUPS -------------------------------- */
 
 export async function getMyGroups(userId: string): Promise<Group[]> {
-  const { data, error } = await supabase
-    .from("groups")
-    .select("*, group_members!inner(user_id, status)")
-    .eq("group_members.user_id", userId)
-    .eq("group_members.status", "accepted")
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((g: any) => {
-    const { group_members, ...rest } = g;
-    return rest;
-  }) as Group[];
+  const cacheKey = `groups:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("groups")
+      .select("*, group_members!inner(user_id, status)")
+      .eq("group_members.user_id", userId)
+      .eq("group_members.status", "accepted")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const groups = (data ?? []).map((g: any) => {
+      const { group_members, ...rest } = g;
+      return rest;
+    }) as Group[];
+    setCachedData(cacheKey, groups).catch(() => {});
+    return groups;
+  } catch (err) {
+    const cached = await getCachedData<Group[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function createGroup(
   userId: string,
   name: string,
   description: string | null,
+  avatar_url?: string | null,
 ): Promise<Group> {
   const { data, error } = await supabase
     .from("groups")
-    .insert({ name, description, created_by: userId })
+    .insert({ name, description, avatar_url: avatar_url || null, created_by: userId })
     .select("*")
     .single();
   if (error) throw error;
@@ -126,6 +177,16 @@ export async function getGroup(groupId: string): Promise<Group | null> {
   const { data, error } = await supabase.from("groups").select("*").eq("id", groupId).maybeSingle();
   if (error) throw error;
   return data as Group | null;
+}
+
+export async function updateGroupAvatar(groupId: string, avatar_url: string | null): Promise<void> {
+  const { error } = await supabase.from("groups").update({ avatar_url }).eq("id", groupId);
+  if (error) throw error;
+}
+
+export async function updateGroupName(groupId: string, name: string): Promise<void> {
+  const { error } = await supabase.from("groups").update({ name }).eq("id", groupId);
+  if (error) throw error;
 }
 
 export async function leaveGroup(groupId: string, userId: string) {
@@ -248,30 +309,47 @@ export async function respondToInvite(opts: {
 /* ------------------------------- EXPENSES ------------------------------- */
 
 export async function getGroupExpenses(groupId: string): Promise<Expense[]> {
-  const { data, error } = await supabase
-    .from("expenses")
-    .select("*")
-    .eq("group_id", groupId)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((e) => ({
-    ...e,
-    description: getCleanExpenseDescription(e.description),
-  })) as Expense[];
+  const cacheKey = `expenses:${groupId}`;
+  try {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const expenses = (data ?? []).map((e) => ({
+      ...e,
+      description: getCleanExpenseDescription(e.description),
+    })) as Expense[];
+    setCachedData(cacheKey, expenses).catch(() => {});
+    return expenses;
+  } catch (err) {
+    const cached = await getCachedData<Expense[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function getAllMyExpenses(userId: string): Promise<Expense[]> {
-  // RLS will automatically filter this to only expenses the user is involved in
-  const { data, error } = await supabase
-    .from("expenses")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(100);
-  if (error) throw error;
-  return (data ?? []).map((e) => ({
-    ...e,
-    description: getCleanExpenseDescription(e.description),
-  })) as Expense[];
+  const cacheKey = `all_my_expenses:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    const expenses = (data ?? []).map((e) => ({
+      ...e,
+      description: getCleanExpenseDescription(e.description),
+    })) as Expense[];
+    setCachedData(cacheKey, expenses).catch(() => {});
+    return expenses;
+  } catch (err) {
+    const cached = await getCachedData<Expense[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function getExpense(expenseId: string): Promise<Expense | null> {
@@ -364,6 +442,23 @@ export async function addExpense(opts: {
   splits: { userId: string; amount: number; note?: string }[];
 }) {
   const cleanDescription = getCleanExpenseDescription(opts.description);
+
+  // Offline queue support: if offline, store in sync queue and return optimistic record
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    await enqueueSyncAction("add_expense", opts);
+    const mockExpense: Expense = {
+      id: `temp_exp_${Date.now()}`,
+      group_id: opts.groupId,
+      created_by: opts.createdBy,
+      paid_by: opts.createdBy,
+      description: cleanDescription,
+      amount: opts.amount,
+      created_at: new Date().toISOString(),
+    };
+    const cached = (await getCachedData<Expense[]>(`expenses:${opts.groupId}`)) || [];
+    await setCachedData(`expenses:${opts.groupId}`, [mockExpense, ...cached]);
+    return mockExpense;
+  }
 
   // 1. Insert expense with clean description immediately
   const { data, error } = await supabase
@@ -713,16 +808,25 @@ export async function settleByUpi(opts: {
 /* ----------------------------- NOTIFICATIONS ---------------------------- */
 
 export async function getNotifications(userId: string): Promise<AppNotification[]> {
-  const { data, error } = await supabase
-    .from("notifications")
-    .select("*")
-    .eq("recipient_id", userId)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((notif) => ({
-    ...notif,
-    message: notif.message ? getCleanExpenseDescription(notif.message) : notif.message,
-  })) as AppNotification[];
+  const cacheKey = `notifications:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("*")
+      .eq("recipient_id", userId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const notifications = (data ?? []).map((notif) => ({
+      ...notif,
+      message: notif.message ? getCleanExpenseDescription(notif.message) : notif.message,
+    })) as AppNotification[];
+    setCachedData(cacheKey, notifications).catch(() => {});
+    return notifications;
+  } catch (err) {
+    const cached = await getCachedData<AppNotification[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
 }
 
 export async function sendSettlementRequest(opts: {
@@ -793,4 +897,352 @@ export async function dismissNotification(id: string) {
 export async function dismissAllNotifications(userId: string) {
   const { error } = await supabase.from("notifications").delete().eq("recipient_id", userId);
   if (error) throw error;
+}
+
+export async function getGroupMessages(
+  groupId: string,
+  limit = 50,
+  beforeCreatedAt?: string,
+): Promise<GroupMessage[]> {
+  const cacheKey = `chat:${groupId}`;
+  try {
+    let query = supabase
+      .from("group_messages")
+      .select("*")
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (beforeCreatedAt) {
+      query = query.lt("created_at", beforeCreatedAt);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn("Could not fetch group messages:", error.message);
+      const cached = await getCachedData<GroupMessage[]>(cacheKey);
+      return cached || [];
+    }
+    const msgs = ((data as GroupMessage[]) ?? []).reverse();
+    setCachedData(cacheKey, msgs).catch(() => {});
+    return msgs;
+  } catch (err) {
+    console.warn("Error fetching group messages:", err);
+    const cached = await getCachedData<GroupMessage[]>(cacheKey);
+    return cached || [];
+  }
+}
+
+export async function sendGroupMessage(params: {
+  groupId: string;
+  senderId: string;
+  messageText: string;
+  mentionedUserId?: string | null;
+  mentionedAll?: boolean;
+}): Promise<GroupMessage> {
+  const isMentionUser = !!params.mentionedUserId;
+  const isMentionAll = !!params.mentionedAll;
+
+  // Retention: 24 hours for @user, 7 days for normal or @all
+  const retentionMs = isMentionUser ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const expiresAt = new Date(Date.now() + retentionMs).toISOString();
+
+  // Offline queue support
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    await enqueueSyncAction("send_message", params);
+    const mockMsg: GroupMessage = {
+      id: `temp_msg_${Date.now()}`,
+      group_id: params.groupId,
+      sender_id: params.senderId,
+      message_text: params.messageText.trim(),
+      mentioned_user_id: params.mentionedUserId ?? null,
+      mentioned_all: isMentionAll,
+      is_edited: false,
+      created_at: new Date().toISOString(),
+      expires_at: expiresAt,
+    };
+    const cached = (await getCachedData<GroupMessage[]>(`chat:${params.groupId}`)) || [];
+    await setCachedData(`chat:${params.groupId}`, [...cached, mockMsg]);
+    return mockMsg;
+  }
+
+  const row = {
+    group_id: params.groupId,
+    sender_id: params.senderId,
+    message_text: params.messageText.trim(),
+    mentioned_user_id: params.mentionedUserId ?? null,
+    mentioned_all: isMentionAll,
+    is_edited: false,
+    expires_at: expiresAt,
+  };
+
+  const { data, error } = await supabase
+    .from("group_messages")
+    .insert(row)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+  return data as GroupMessage;
+}
+
+export async function editGroupMessage(
+  messageId: string,
+  newMessageText: string,
+): Promise<GroupMessage> {
+  const { data, error } = await supabase
+    .from("group_messages")
+    .update({
+      message_text: newMessageText.trim(),
+      is_edited: true,
+      edited_at: new Date().toISOString(),
+    })
+    .eq("id", messageId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as GroupMessage;
+}
+
+export async function deleteGroupMessage(messageId: string): Promise<void> {
+  const { error } = await supabase.from("group_messages").delete().eq("id", messageId);
+  if (error) throw error;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FRIENDS
+──────────────────────────────────────────────────────────────────────────── */
+
+/** Search profiles by name or username (excludes current user). */
+export async function searchUsersByName(query: string): Promise<UserSearchResult[]> {
+  if (!query.trim()) return [];
+  try {
+    const { data, error } = await supabase.rpc("search_profiles_by_name", {
+      _query: query.trim(),
+      _limit: 15,
+    });
+    if (error) throw error;
+    return (data ?? []) as UserSearchResult[];
+  } catch (err: any) {
+    console.warn("search_profiles_by_name RPC error, falling back to direct query:", err?.message || err);
+    try {
+      const { data: fallbackData } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, avatar_url")
+        .or(`username.ilike.%${query.trim()}%,full_name.ilike.%${query.trim()}%`)
+        .limit(15);
+      if (fallbackData) {
+        const { data: authData } = await supabase.auth.getUser();
+        const myId = authData?.user?.id;
+        return fallbackData
+          .filter((u) => u.id !== myId)
+          .map((u) => ({
+            id: u.id,
+            username: u.username ?? "",
+            full_name: u.full_name ?? "",
+            avatar_url: u.avatar_url ?? null,
+          }));
+      }
+    } catch {
+      // ignore fallback error
+    }
+    return [];
+  }
+}
+
+/** Send a friend request from currentUserId to targetUserId. */
+export async function sendFriendRequest(
+  senderId: string,
+  recipientId: string,
+): Promise<void> {
+  // Upsert so re-requesting after a decline works.
+  const { error: frErr } = await supabase.from("friend_requests").upsert(
+    { sender_id: senderId, recipient_id: recipientId, status: "pending" },
+    { onConflict: "sender_id,recipient_id" },
+  );
+  if (frErr) throw frErr;
+
+  // Create a notification for the recipient.
+  const sender = await getProfile(senderId);
+  const { error: notifErr } = await supabase.from("notifications").insert({
+    recipient_id: recipientId,
+    sender_id: senderId,
+    type: "friend_request",
+    status: "pending",
+    message: `sent you a friend request`,
+    sender_username: sender?.username ?? null,
+    sender_upi: sender?.upi_id ?? null,
+  });
+  // Notification failures are non-fatal; log and continue.
+  if (notifErr) console.warn("Friend request notification failed:", notifErr.message);
+}
+
+/** Accept or decline a friend request. */
+export async function respondToFriendRequest(opts: {
+  notificationId: string;
+  senderId: string;
+  recipientId: string; // current user
+  accept: boolean;
+}): Promise<void> {
+  if (opts.accept) {
+    // Insert symmetric friendship rows.
+    const { error: f1 } = await supabase
+      .from("friends")
+      .upsert({ user_id: opts.recipientId, friend_id: opts.senderId }, { onConflict: "user_id,friend_id" });
+    if (f1) throw f1;
+    const { error: f2 } = await supabase
+      .from("friends")
+      .upsert({ user_id: opts.senderId, friend_id: opts.recipientId }, { onConflict: "user_id,friend_id" });
+    if (f2) throw f2;
+
+    // Mark request as accepted.
+    await supabase
+      .from("friend_requests")
+      .update({ status: "accepted" })
+      .eq("sender_id", opts.senderId)
+      .eq("recipient_id", opts.recipientId);
+
+    // Notify the original sender that their request was accepted.
+    const acceptor = await getProfile(opts.recipientId);
+    await supabase.from("notifications").insert({
+      recipient_id: opts.senderId,
+      sender_id: opts.recipientId,
+      type: "friend_request",
+      status: "accepted",
+      message: `accepted your friend request`,
+      sender_username: acceptor?.username ?? null,
+    });
+  } else {
+    // Declined: delete the friend request row.
+    await supabase
+      .from("friend_requests")
+      .delete()
+      .eq("sender_id", opts.senderId)
+      .eq("recipient_id", opts.recipientId);
+  }
+
+  // Update the notification status.
+  const { error: nErr } = await supabase
+    .from("notifications")
+    .update({ status: opts.accept ? "accepted" : "declined" })
+    .eq("id", opts.notificationId);
+  if (nErr) console.warn("Could not update friend request notification:", nErr.message);
+}
+
+/** Get the current user's friends with their profile data. */
+export async function getFriends(userId: string): Promise<Friend[]> {
+  const cacheKey = `friends:${userId}`;
+  try {
+    const { data, error } = await supabase
+      .from("friends")
+      .select("id, user_id, friend_id, created_at, profiles:friend_id(id, username, full_name, avatar_url)")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const friends = (data ?? []).map((row: any) => ({
+      id: row.id,
+      user_id: row.user_id,
+      friend_id: row.friend_id,
+      created_at: row.created_at,
+      profile: row.profiles ?? undefined,
+    })) as Friend[];
+    setCachedData(cacheKey, friends).catch(() => {});
+    return friends;
+  } catch (err) {
+    const cached = await getCachedData<Friend[]>(cacheKey);
+    if (cached) return cached;
+    throw err;
+  }
+}
+
+/** Background sync item executor */
+export async function executeSyncAction(item: SyncQueueItem): Promise<boolean> {
+  try {
+    if (item.action === "add_expense") {
+      await addExpense(item.payload);
+      return true;
+    }
+    if (item.action === "send_message") {
+      await sendGroupMessage(item.payload);
+      return true;
+    }
+    if (item.action === "mark_paid") {
+      if (item.payload.type === "cash") {
+        await settleByCash(item.payload);
+      } else {
+        await settleByUpi(item.payload);
+      }
+      return true;
+    }
+    return true;
+  } catch (err) {
+    console.warn("[Sync] Error processing queued action:", item.action, err);
+    return false;
+  }
+}
+
+/** Get the friend request status between the current user and another user. */
+export async function getFriendRequestStatus(
+  currentUserId: string,
+  targetUserId: string,
+): Promise<FriendRequestStatus> {
+  // Check if already friends.
+  const { data: friendRow } = await supabase
+    .from("friends")
+    .select("id")
+    .eq("user_id", currentUserId)
+    .eq("friend_id", targetUserId)
+    .maybeSingle();
+  if (friendRow) return "friends";
+
+  // Check outgoing request.
+  const { data: sentRow } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("sender_id", currentUserId)
+    .eq("recipient_id", targetUserId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (sentRow) return "pending_sent";
+
+  // Check incoming request.
+  const { data: receivedRow } = await supabase
+    .from("friend_requests")
+    .select("id")
+    .eq("sender_id", targetUserId)
+    .eq("recipient_id", currentUserId)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (receivedRow) return "pending_received";
+
+  return "none";
+}
+
+/** Remove a friend (deletes both symmetric rows). */
+export async function removeFriend(userId: string, friendId: string): Promise<void> {
+  await supabase.from("friends").delete().eq("user_id", userId).eq("friend_id", friendId);
+  await supabase.from("friends").delete().eq("user_id", friendId).eq("friend_id", userId);
+  // Also clean up any accepted friend_request rows.
+  await supabase
+    .from("friend_requests")
+    .delete()
+    .or(`and(sender_id.eq.${userId},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${userId})`);
+}
+
+/** Get a user's friends that are NOT yet in a specific group — for the invite dialog. */
+export async function getFriendsNotInGroup(
+  userId: string,
+  groupId: string,
+): Promise<Friend[]> {
+  const allFriends = await getFriends(userId);
+  const { data: members } = await supabase
+    .from("group_members")
+    .select("user_id")
+    .eq("group_id", groupId)
+    .eq("status", "accepted");
+  const memberSet = new Set((members ?? []).map((m: any) => m.user_id));
+  return allFriends.filter((f) => !memberSet.has(f.friend_id));
 }

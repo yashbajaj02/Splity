@@ -5,7 +5,9 @@ import { Loader2, Users, Bell, HandCoins, User } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useSupabaseRealtime } from "@/hooks/use-supabase-realtime";
-import { getProfile, getNotifications } from "@/lib/api";
+import { useNetworkStatus } from "@/hooks/use-network-status";
+import { startBackgroundSync } from "@/lib/offline-db";
+import { getProfile, getNotifications, executeSyncAction } from "@/lib/api";
 import { Onboarding } from "@/components/Onboarding";
 import { AppLogo } from "@/components/AppLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -21,11 +23,12 @@ export const Route = createFileRoute("/app")({
 });
 
 function AppLayout() {
-  const { session, loading, isPasswordRecovery } = useAuth();
+  const { session, loading, isPasswordRecovery, signOut } = useAuth();
   const navigate = useNavigate();
   const userId = session?.user.id;
   const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { isOnline, pendingSyncCount } = useNetworkStatus();
 
   useEffect(() => {
     if (!loading && isPasswordRecovery) {
@@ -34,6 +37,26 @@ function AppLayout() {
     }
     if (!loading && !session) navigate({ to: "/auth" });
   }, [loading, session, isPasswordRecovery, navigate]);
+
+  // Initialize reduce-motion preference from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("splity-reduce-motion");
+    if (saved === "true") {
+      document.documentElement.classList.add("reduce-motion");
+    } else {
+      document.documentElement.classList.remove("reduce-motion");
+    }
+  }, []);
+
+  // Background 30-second silent sync
+  useEffect(() => {
+    startBackgroundSync(executeSyncAction);
+    const handleSynced = () => {
+      queryClient.invalidateQueries();
+    };
+    window.addEventListener("splity:synced", handleSynced);
+    return () => window.removeEventListener("splity:synced", handleSynced);
+  }, [queryClient]);
 
   const profileQuery = useQuery({
     queryKey: ["profile", userId],
@@ -53,7 +76,7 @@ function AppLayout() {
   if (loading || isPasswordRecovery || !session || profileQuery.isLoading) {
     return (
       <div className="min-h-[100dvh] bg-background">
-        <header className="sticky top-0 z-20 border-b border-border bg-background/80 px-5 py-3.5">
+        <header className="sticky top-0 z-20 border-b border-border bg-background/80 px-5 py-3.5 header">
           <div className="mx-auto flex max-w-2xl items-center justify-between">
             <Skeleton className="h-8 w-24 rounded-md" />
             <Skeleton className="h-8 w-20 rounded-full" />
@@ -76,9 +99,14 @@ function AppLayout() {
           <p className="mt-2 text-sm text-muted-foreground">
             {(profileQuery.error as Error).message}
           </p>
-          <Button className="mt-5" variant="outline" onClick={() => profileQuery.refetch()}>
-            Try again
-          </Button>
+          <div className="mt-5 flex items-center justify-center gap-3">
+            <Button variant="outline" onClick={() => profileQuery.refetch()}>
+              Try again
+            </Button>
+            <Button variant="secondary" onClick={() => signOut()}>
+              Sign out
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -103,36 +131,24 @@ function AppLayout() {
   const userMeta = session.user.user_metadata;
 
   return (
-    <div className="min-h-[100dvh] overflow-x-hidden pb-24 bg-background">
-      <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
-          <Link to="/app" className="flex items-center gap-2">
-            <AppLogo className="h-8 w-8 rounded-lg" />
-            <span className="font-display text-base font-bold">Splity</span>
-          </Link>
-          <Link
-            to="/app/profile"
-            className="flex items-center gap-2 rounded-full border border-border bg-card py-1 pl-1 pr-3 text-sm font-medium transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Avatar className="h-6 w-6 border-border">
-              <AvatarImage src={profile.avatar_url ?? undefined} />
-              <AvatarFallback className="text-[10px] bg-secondary text-primary">
-                {getInitials(
-                  profile.full_name ?? userMeta?.full_name ?? userMeta?.name ?? "",
-                  session.user.email ?? "",
-                )}
-              </AvatarFallback>
-            </Avatar>
-            Profile
-          </Link>
+    <div className="min-h-screen w-full bg-white text-foreground flex flex-col items-center">
+      {!isOnline && (
+        <div className="sticky top-0 z-50 w-full bg-slate-900 text-white text-xs font-semibold py-2 px-3 text-center flex items-center justify-center gap-2 shadow-md">
+          <span>📡 Offline - Changes will sync</span>
+          {pendingSyncCount > 0 && (
+            <span className="bg-emerald-600 px-2 py-0.5 rounded-full text-[10px] font-bold">
+              {pendingSyncCount} queued
+            </span>
+          )}
         </div>
-      </header>
+      )}
+      <div className="w-full max-w-[480px] min-h-screen flex flex-col relative pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
+        <main key={pathname} className="flex-1 px-4 sm:px-5 pt-4 animate-page-enter">
+          <Outlet />
+        </main>
 
-      <main className="mx-auto max-w-2xl px-5 py-6">
-        <Outlet />
-      </main>
-
-      <BottomNav pendingCount={pendingCount} />
+        <BottomNav pendingCount={pendingCount} />
+      </div>
     </div>
   );
 }
@@ -151,59 +167,65 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
     { to: "/app", label: "Groups", icon: Users, exact: true },
     { to: "/app/activity", label: "Activity", icon: Bell, badge: pendingCount },
     { to: "/app/settle", label: "Settle Up", icon: HandCoins },
+    { to: "/app/profile", label: "Profile", icon: User },
   ];
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/90 backdrop-blur">
-      <div className="mx-auto flex max-w-2xl items-stretch justify-around px-2 py-1.5">
+    <nav className="fixed inset-x-0 bottom-0 z-30 flex justify-center bg-white/95 backdrop-blur-md border-t border-slate-100 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] pb-safe bottom-nav">
+      <div className="w-full max-w-[480px] h-16 flex items-center justify-around px-3">
         {items.map((item) => {
           const active = item.exact ? pathname === item.to : pathname.startsWith(item.to);
           const Icon = item.icon;
           const hasBadge = "badge" in item && !!item.badge;
+
           return (
             <Link
               key={item.to}
-              to={item.to as "/app" | "/app/activity" | "/app/settle"}
+              to={item.to as "/app" | "/app/activity" | "/app/settle" | "/app/profile"}
               className={cn(
-                "group relative flex flex-1 flex-col items-center gap-1 rounded-xl py-2 text-xs font-medium transition-colors duration-200 active:scale-95",
-                active ? "text-primary" : "text-muted-foreground hover:text-foreground",
-                hasBadge && !active && "text-warning",
+                "relative flex flex-1 flex-col items-center justify-center gap-0.5 py-1 px-1 rounded-2xl text-[11px] font-semibold transition-colors duration-200 select-none active:scale-95",
+                active ? "text-emerald-700" : "text-slate-400 hover:text-slate-600",
               )}
             >
-              {/* Active Indicator Capsule */}
               {active && (
                 <motion.div
-                  layoutId={shouldReduceMotion ? undefined : "bottomNavIndicator"}
-                  className="absolute inset-0 rounded-xl bg-primary/10"
-                  transition={{ type: "spring", bounce: 0.1, duration: 0.25 }}
+                  layoutId="bottomNavActivePill"
+                  className="absolute inset-0 rounded-2xl bg-emerald-50/90 border border-emerald-200/60 shadow-[0_0_16px_rgba(16,185,129,0.25)] -z-10"
+                  transition={
+                    shouldReduceMotion
+                      ? { duration: 0 }
+                      : {
+                          type: "spring",
+                          stiffness: 350,
+                          damping: 28,
+                          duration: 0.25,
+                        }
+                  }
                 />
-              )}
-              {/* Hover Indicator */}
-              {!active && (
-                <div className="absolute inset-0 rounded-xl bg-secondary/0 transition-colors duration-200 group-hover:bg-secondary/40" />
               )}
 
-              <span className="relative z-10 inline-flex items-center justify-center">
-                {hasBadge ? (
-                  <span
-                    className="pointer-events-none absolute -inset-1.5 rounded-full bg-warning/35 animate-bell-glow"
-                    aria-hidden
-                  />
-                ) : null}
+              <div className="relative flex items-center justify-center w-7 h-7">
                 <Icon
                   className={cn(
-                    "relative z-[1] h-5 w-5 transition-transform duration-200",
-                    hasBadge && "animate-bell-ring text-warning",
-                    active && "scale-105",
+                    "h-5 w-5 stroke-[2.2] transition-transform duration-200",
+                    active ? "text-emerald-700 scale-105" : "text-slate-400",
                   )}
                 />
-                {hasBadge ? (
-                  <span className="absolute -right-2 -top-1.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold leading-none text-destructive-foreground ring-2 ring-background">
+                {hasBadge && (
+                  <span className="absolute -right-1.5 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[9px] font-bold text-white shadow-xs">
                     {item.badge! > 9 ? "9+" : item.badge}
                   </span>
-                ) : null}
+                )}
+              </div>
+
+              <span
+                className={cn(
+                  "tracking-tight transition-all duration-200",
+                  active ? "font-bold text-emerald-700" : "font-medium text-slate-400",
+                )}
+              >
+                {item.label}
               </span>
-              <span className="relative z-10">{item.label}</span>
             </Link>
           );
         })}

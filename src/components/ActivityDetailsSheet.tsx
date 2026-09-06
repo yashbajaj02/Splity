@@ -11,6 +11,8 @@ import {
   getCleanMemberName,
 } from "@/lib/api";
 import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { getInitials } from "@/lib/utils";
 
 interface ActivityDetailsSheetProps {
   open: boolean;
@@ -152,6 +154,7 @@ export function ActivityDetailsSheet({
     const payerProfile = profilesById[exp.paid_by];
     const payerName =
       payerProfile?.full_name || payerProfile?.username?.replace(/^@/, "") || "Someone";
+    const payerAvatarUrl = payerProfile?.avatar_url || null;
 
     const canViewAllNotes = exp.created_by === currentUserId;
 
@@ -169,6 +172,7 @@ export function ActivityDetailsSheet({
         name,
         amount: Number(s.amount_owed),
         note,
+        avatarUrl: p?.avatar_url || null,
       };
     });
 
@@ -180,6 +184,7 @@ export function ActivityDetailsSheet({
       totalAmount: Number(exp.amount),
       createdAt: exp.created_at,
       payerName,
+      payerAvatarUrl,
       splits: memberSplits,
     };
   });
@@ -237,7 +242,15 @@ export function ActivityDetailsSheet({
                     <p className="font-semibold text-lg text-foreground truncate">{item.title}</p>
                     <div className="mt-3">
                       <p className="text-xs text-muted-foreground">Added by</p>
-                      <p className="text-sm font-medium text-foreground">{item.payerName}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Avatar className="h-6 w-6 shrink-0 shadow-2xs">
+                          <AvatarImage src={item.payerAvatarUrl || undefined} alt={item.payerName} />
+                          <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                            {getInitials(item.payerName, "U")}
+                          </AvatarFallback>
+                        </Avatar>
+                        <p className="text-sm font-medium text-foreground">{item.payerName}</p>
+                      </div>
                     </div>
                     <p className="text-xs text-muted-foreground mt-3">
                       {format(new Date(item.createdAt), "d MMM yyyy • h:mm a")}
@@ -281,15 +294,18 @@ export function ActivityDetailsSheet({
                             <div key={s.userId} className="p-3 space-y-1.5">
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2.5 min-w-0">
-                                  <div
-                                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase ${
-                                      isSelf
-                                        ? "bg-primary text-primary-foreground"
-                                        : "bg-secondary text-foreground"
-                                    }`}
-                                  >
-                                    {s.name.slice(0, 2).toUpperCase()}
-                                  </div>
+                                  <Avatar className="h-7 w-7 shrink-0 shadow-2xs">
+                                    <AvatarImage src={s.avatarUrl || undefined} alt={s.name} />
+                                    <AvatarFallback
+                                      className={`text-[11px] font-bold uppercase ${
+                                        isSelf
+                                          ? "bg-primary text-primary-foreground"
+                                          : "bg-secondary text-foreground"
+                                      }`}
+                                    >
+                                      {getInitials(s.name, "U")}
+                                    </AvatarFallback>
+                                  </Avatar>
                                   <p className="text-sm font-medium text-foreground truncate">
                                     {s.name}{" "}
                                     {isSelf && (

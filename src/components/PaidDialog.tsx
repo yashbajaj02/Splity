@@ -34,6 +34,7 @@ export function PaidDialog({
   selectedExpenses,
   baseAmount,
   onSelectionChange,
+  trigger,
 }: {
   payeeName: string;
   groupName?: string | null;
@@ -44,6 +45,7 @@ export function PaidDialog({
   selectedExpenses?: Record<string, number>;
   baseAmount?: number;
   onSelectionChange?: (selected: Record<string, number> | undefined) => void;
+  trigger?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
@@ -241,19 +243,31 @@ export function PaidDialog({
   return (
     <>
       {/* ── Trigger ── */}
-      <Button
-        size="sm"
-        id={`paid-trigger-${payeeName}`}
-        variant="outline"
-        onClick={() => {
-          setManualAmount(null);
-          setPaidAmount(amount.toFixed(2));
-          handleOpenChange(true);
-        }}
-      >
-        <CheckCircle2 className="h-4 w-4 mr-1.5" />
-        Paid
-      </Button>
+      {trigger ? (
+        <div
+          onClick={() => {
+            setManualAmount(null);
+            setPaidAmount(amount.toFixed(2));
+            handleOpenChange(true);
+          }}
+        >
+          {trigger}
+        </div>
+      ) : (
+        <Button
+          size="sm"
+          id={`paid-trigger-${payeeName}`}
+          variant="outline"
+          onClick={() => {
+            setManualAmount(null);
+            setPaidAmount(amount.toFixed(2));
+            handleOpenChange(true);
+          }}
+        >
+          <CheckCircle2 className="h-4 w-4 mr-1.5" />
+          Paid
+        </Button>
+      )}
 
       {/* ── "I've Already Paid" Modal ── */}
       <Dialog open={open} onOpenChange={handleOpenChange}>

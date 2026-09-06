@@ -1,5 +1,6 @@
 {
   "name": "splitpay",
+  "version": "1.0.3",
   "private": true,
   "sideEffects": false,
   "type": "module",

@@ -1,9 +1,10 @@
-import { getCleanErrorMessage } from "@/lib/utils";
+import { getCleanErrorMessage, cn } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, useMemo, memo, lazy, Suspense } from "react";
+import { useEffect, useState, useMemo, useRef, memo, lazy, Suspense } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  ArrowUpRight,
   CalendarDays,
   Clock,
   HandCoins,
@@ -18,7 +19,21 @@ import {
   ChevronDown,
   ChevronRight,
   X,
+  Plus,
+  Camera,
+  MessageSquare,
+  Utensils,
+  Zap,
+  ShoppingBag,
+  Car,
+  Film,
+  Package,
+  ArrowLeftRight,
+  Settings,
+  Check,
+  ImagePlus,
 } from "lucide-react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -33,19 +48,28 @@ import {
   getSplitsForGroup,
   inviteToGroup,
   leaveGroup,
-  parseExpenseDescription,
+  updateGroupAvatar,
+  updateGroupName,
+  uploadToCloudinary,
+  getFriendsNotInGroup,
+  getFriends,
+  sendFriendRequest,
+  searchUsersByName,
 } from "@/lib/api";
-import type { Expense, ExpenseSplit, PairwiseDebt, Profile } from "@/lib/app-types";
+import { parseExpenseDescription } from "@/lib/api";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import type { Expense, ExpenseSplit, PairwiseDebt, Profile, Group, GroupMember, Friend, UserSearchResult } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
+import { getInitials } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
-const AddExpenseDialog = lazy(() =>
-  import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog })),
-);
+import { AddExpenseDialog } from "@/components/AddExpenseDialog";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
 import { QrPayDialog } from "@/components/QrPayDialog";
 import { PaidDialog } from "@/components/PaidDialog";
 import { ExpenseBreakdownSheet } from "@/components/ExpenseBreakdownSheet";
-import { ExpenseDetailsModal } from "@/components/ExpenseDetailsModal";
+import { ExpenseDetailsSheet } from "@/components/ExpenseDetailsSheet";
+import { GroupChatPage } from "@/components/GroupChatPage";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +94,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 
+export type DatePreset = "all" | "today" | "yesterday" | "last7" | "thisMonth" | "custom";
+
+export const PRESETS: { id: DatePreset; label: string }[] = [
+  { id: "all", label: "All time" },
+  { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "last7", label: "Last 7 days" },
+  { id: "custom", label: "Custom →" },
+];
+
 export const Route = createFileRoute("/app/group/$groupId")({
   component: GroupDetail,
 });
@@ -83,10 +117,23 @@ function GroupDetail() {
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
-  const [visibleExpenseCount, setVisibleExpenseCount] = useState(5);
-  const [activeDropdown, setActiveDropdown] = useState<"members" | "settlements" | null>(null);
-  const [memberSearchQuery, setMemberSearchQuery] = useState("");
-  const [settlementSearchQuery, setSettlementSearchQuery] = useState("");
+  const [visibleExpenseCount, setVisibleExpenseCount] = useState(6);
+  const [addExpenseOpen, setAddExpenseOpen] = useState(false);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
+  const [settlePopoverOpen, setSettlePopoverOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"expenses" | "activity" | "chat">("expenses");
+  
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [memberBalancesOpen, setMemberBalancesOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [membersListOpen, setMembersListOpen] = useState(false);
+  const [editNameOpen, setEditNameOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [isUpdatingName, setIsUpdatingName] = useState(false);
+  const [rangePopoverOpen, setRangePopoverOpen] = useState(false);
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
 
   // Derive fromDate / toDate from the current preset
   const { fromDate, toDate } = (() => {
@@ -113,7 +160,6 @@ function GroupDetail() {
       const end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       return { fromDate: fmt(start), toDate: fmt(end) };
     }
-
     if (datePreset === "custom") {
       return { fromDate: customFrom, toDate: customTo };
     }
@@ -128,6 +174,79 @@ function GroupDetail() {
     queryKey: ["group-members", groupId],
     queryFn: () => getGroupMembers(groupId),
   });
+
+  const friendsQuery = useQuery({
+    queryKey: ["my-friends", userId],
+    queryFn: () => getFriends(userId),
+    enabled: !!userId,
+  });
+
+  const [requestedUserIds, setRequestedUserIds] = useState<Set<string>>(new Set());
+
+  const addFriendMutation = useMutation({
+    mutationFn: (friendId: string) => sendFriendRequest(userId, friendId),
+    onSuccess: (_, friendId) => {
+      toast.success("Friend request sent");
+      setRequestedUserIds((prev) => {
+        const next = new Set(prev);
+        next.add(friendId);
+        return next;
+      });
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to send friend request");
+    },
+  });
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setIsUploadingAvatar(true);
+      const url = await uploadToCloudinary(file, "splity/groups");
+      await updateGroupAvatar(groupId, url);
+      toast.success("Group avatar updated");
+      queryClient.invalidateQueries({ queryKey: ["group", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+    } catch (err: any) {
+      toast.error(err.message || "Avatar upload failed");
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    setIsUploadingAvatar(true);
+    setAvatarMenuOpen(false);
+    try {
+      await updateGroupAvatar(groupId, null);
+      toast.success("Group avatar removed");
+      queryClient.invalidateQueries({ queryKey: ["group", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to remove group avatar");
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
+  const handleUpdateGroupName = async () => {
+    const trimmed = newGroupName.trim();
+    if (!trimmed || trimmed === group?.name) return;
+    setIsUpdatingName(true);
+    try {
+      await updateGroupName(groupId, trimmed);
+      await queryClient.invalidateQueries({ queryKey: ["group", groupId] });
+      await queryClient.invalidateQueries({ queryKey: ["groups"] });
+      await queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
+      toast.success("Group name updated! 🎉");
+      setEditNameOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to update group name");
+    } finally {
+      setIsUpdatingName(false);
+    }
+  };
   const expensesQuery = useQuery({
     queryKey: ["group-expenses", groupId],
     queryFn: () => getGroupExpenses(groupId),
@@ -166,7 +285,6 @@ function GroupDetail() {
     return "user";
   };
 
-  const expenseIds = (expensesQuery.data ?? []).map((expense) => expense.id);
   const splitsQuery = useQuery({
     queryKey: ["group-splits", groupId],
     queryFn: () => getSplitsForGroup(groupId),
@@ -236,6 +354,7 @@ function GroupDetail() {
   const acceptedMembers = members.filter((member) => member.status === "accepted");
   const pendingMembers = members.filter((member) => member.status === "pending");
   const expenses = expensesQuery.data ?? [];
+
   const filteredExpenses = expenses.filter((expense) => {
     const { cleanDescription } = parseExpenseDescription(expense.description);
     const descLower = cleanDescription.toLowerCase();
@@ -247,51 +366,61 @@ function GroupDetail() {
     if (toDate && expenseDate > toDate) return false;
     return true;
   });
+
   const visibleExpenses = filteredExpenses.slice(0, visibleExpenseCount);
   const hasMoreExpenses = filteredExpenses.length > visibleExpenseCount;
+
+  const groupedExpenses = useMemo(() => {
+    const today: typeof visibleExpenses = [];
+    const yesterday: typeof visibleExpenses = [];
+    const earlier: typeof visibleExpenses = [];
+
+    const now = new Date();
+    // Use local date strings for comparison to avoid timezone issues
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    
+    const yDate = new Date(now);
+    yDate.setDate(yDate.getDate() - 1);
+    const yesterdayStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
+
+    for (const item of visibleExpenses) {
+      // item.created_at is UTC, convert to local date for comparison
+      const itemDate = new Date(item.created_at);
+      const itemDateStr = `${itemDate.getFullYear()}-${pad(itemDate.getMonth() + 1)}-${pad(itemDate.getDate())}`;
+      
+      if (itemDateStr === todayStr) {
+        today.push(item);
+      } else if (itemDateStr === yesterdayStr) {
+        yesterday.push(item);
+      } else {
+        earlier.push(item);
+      }
+    }
+    return { today, yesterday, earlier };
+  }, [visibleExpenses]);
+
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
   for (const split of splitsQuery.data ?? []) {
     (splitsByExpense[split.expense_id] ??= []).push(split);
   }
+
   const pairwiseDebts = computePairwiseDebts(expenses, splitsByExpense);
   const visibleDebts = pairwiseDebts.filter((debt) => debt.from === userId || debt.to === userId);
   const isCreator = group ? group.created_by === userId : false;
   const isMember = acceptedMembers.some((member) => member.user_id === userId);
 
-  // Client-side search filters (Must be declared at the top level before early returns)
-  const filteredAcceptedMembers = useMemo(() => {
-    const q = memberSearchQuery.trim().toLowerCase().replace(/^@/, "");
-    if (!q) return acceptedMembers;
-    return acceptedMembers.filter((m) => {
-      const p = profileMap.get(m.user_id);
-      const dName = (p?.full_name ?? "").toLowerCase();
-      const uName = (p?.username ?? "").toLowerCase();
-      return dName.includes(q) || uName.includes(q);
-    });
-  }, [acceptedMembers, profileMap, memberSearchQuery]);
+  const groupTotalOwe = useMemo(() => {
+    return visibleDebts
+      .filter((d) => d.from === userId)
+      .reduce((sum, d) => sum + d.amount, 0);
+  }, [visibleDebts, userId]);
 
-  const filteredPendingMembers = useMemo(() => {
-    const q = memberSearchQuery.trim().toLowerCase().replace(/^@/, "");
-    if (!q) return pendingMembers;
-    return pendingMembers.filter((m) => {
-      const p = profileMap.get(m.user_id);
-      const dName = (p?.full_name ?? "").toLowerCase();
-      const uName = (p?.username ?? "").toLowerCase();
-      return dName.includes(q) || uName.includes(q);
-    });
-  }, [pendingMembers, profileMap, memberSearchQuery]);
-
-  const filteredDebts = useMemo(() => {
-    const q = settlementSearchQuery.trim().toLowerCase().replace(/^@/, "");
-    if (!q) return visibleDebts;
-    return visibleDebts.filter((d) => {
-      const counterpartyId = d.to === userId ? d.from : d.to;
-      const p = profileMap.get(counterpartyId);
-      const dName = (p?.full_name ?? "").toLowerCase();
-      const uName = (p?.username ?? "").toLowerCase();
-      return dName.includes(q) || uName.includes(q);
-    });
-  }, [visibleDebts, profileMap, settlementSearchQuery, userId]);
+  const groupTotalOwed = useMemo(() => {
+    return visibleDebts
+      .filter((d) => d.to === userId)
+      .reduce((sum, d) => sum + d.amount, 0);
+  }, [visibleDebts, userId]);
 
   if (groupQuery.isLoading) {
     return (
@@ -301,11 +430,13 @@ function GroupDetail() {
     );
   }
 
-  if (groupQuery.isError) {
+  if (groupQuery.isError || !group) {
     return (
       <div className="space-y-3 py-16 text-center">
         <p className="text-sm font-medium text-foreground">Could not load this group.</p>
-        <p className="text-sm text-muted-foreground">{(groupQuery.error as Error).message}</p>
+        <p className="text-sm text-muted-foreground">
+          {groupQuery.error ? (groupQuery.error as Error).message : "Group not found."}
+        </p>
         <Button variant="outline" size="sm" onClick={() => groupQuery.refetch()}>
           Try again
         </Button>
@@ -313,682 +444,925 @@ function GroupDetail() {
     );
   }
 
-  if (!group) {
-    return <div className="py-16 text-center text-sm text-muted-foreground">Group not found.</div>;
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
+    <div className="space-y-4 pb-16">
+      {/* ── 1. Header (Back arrow, Group avatar centered, Name, Count, 3-dot Menu) ── */}
+      <div className="relative flex flex-col items-center text-center pt-2">
+        {/* Top-left: Back button */}
         <Link
           to="/app"
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+          className="absolute left-0 top-2 w-9 h-9 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-100 active:scale-90 transition-all z-10"
+          aria-label="Back to groups"
         >
-          <ArrowLeft className="h-4 w-4" /> Groups
+          <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
         </Link>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="font-display text-2xl font-bold">{group.name}</h1>
-            {group.description ? (
-              <p className="text-sm text-muted-foreground">{group.description}</p>
-            ) : null}
-          </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-2">
-            {isMember && !isCreator ? (
-              <LeaveGroupButton
-                groupName={group.name}
-                busy={leaveMutation.isPending}
-                onLeave={() => leaveMutation.mutate()}
-              />
-            ) : null}
-            {isCreator ? (
-              <DeleteGroupButton
-                groupName={group.name}
-                busy={deleteMutation.isPending}
-                onDelete={() => deleteMutation.mutate()}
-              />
-            ) : null}
-          </div>
-        </div>
-      </div>
 
-      {/* ── Top Row: Floating Dropdowns for Members & Pending Settlements ── */}
-      <div className="grid grid-cols-2 gap-3 w-full relative">
-        {/* Members Dropdown */}
-        <Popover
-          open={activeDropdown === "members"}
-          onOpenChange={(open) => {
-            setActiveDropdown(open ? "members" : null);
-            if (!open) setMemberSearchQuery("");
-          }}
-        >
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              className="w-full justify-between h-11 px-4 rounded-2xl border-border/80 bg-card hover:bg-secondary/40 text-foreground font-medium shadow-sm transition-all active:scale-[0.98]"
-            >
-              <span className="flex items-center gap-2 font-display text-sm font-semibold truncate">
-                <Users className="h-4 w-4 text-primary shrink-0" />
-                <span className="truncate">
-                  Members ({acceptedMembers.length + pendingMembers.length})
-                </span>
-              </span>
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 ${
-                  activeDropdown === "members" ? "rotate-180 text-primary" : ""
-                }`}
-              />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            side="bottom"
-            sideOffset={6}
-            className="z-50 w-[92vw] sm:w-[360px] rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-md p-0 text-popover-foreground shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 duration-180 ease-out origin-top overflow-hidden"
-          >
-            {/* Header & Sticky Search Bar */}
-            <div className="p-3.5 border-b border-border/60 bg-popover/80 backdrop-blur-sm sticky top-0 z-10 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-sm font-bold flex items-center gap-2">
-                  <Users className="h-4 w-4 text-primary" />
-                  Members ({acceptedMembers.length + pendingMembers.length})
-                </h3>
-                <InviteDialog groupId={groupId} groupName={group.name} inviterId={userId} />
-              </div>
+        {/* Top-right: Three-dot More menu */}
+        <div className="absolute right-0 top-2 z-10">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="w-9 h-9 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-100 active:scale-90 transition-all"
+                aria-label="More options"
+              >
+                <span className="font-bold text-xl leading-none tracking-wider select-none">···</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-52 p-1.5 rounded-2xl border-slate-100 shadow-xl bg-white">
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => setInviteModalOpen(true)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors text-left"
+                >
+                  <UserPlus className="w-4 h-4 text-emerald-600" />
+                  <span>Invite Members</span>
+                </button>
 
-              {/* Search Bar */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <Input
-                  type="text"
-                  placeholder="Search member..."
-                  value={memberSearchQuery}
-                  onChange={(e) => setMemberSearchQuery(e.target.value)}
-                  className="pl-8 pr-8 h-9 text-xs rounded-xl bg-secondary/50 border-border/60 focus-visible:ring-primary/40"
-                />
-                {memberSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setMemberSearchQuery("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsModalOpen(true)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors text-left"
+                >
+                  <Settings className="w-4 h-4 text-slate-500" />
+                  <span>Group Settings</span>
+                </button>
+
+                {isMember && !isCreator && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-left"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Leave Group</span>
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Leave "{group.name}"?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          You will no longer see expenses or debts in this group.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => leaveMutation.mutate()}
+                          disabled={leaveMutation.isPending}
+                        >
+                          Leave Group
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                )}
+
+                {isCreator && (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <button
+                        type="button"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-left"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        <span>Delete Group</span>
+                      </button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete "{group.name}"?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This permanently deletes the group, all expenses, and splits. This action cannot be undone.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => deleteMutation.mutate()}
+                          disabled={deleteMutation.isPending}
+                        >
+                          Delete Group
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 )}
               </div>
-            </div>
+            </PopoverContent>
+          </Popover>
+        </div>
 
-            <div className="max-h-[320px] overflow-y-auto p-2 space-y-1">
-              {filteredAcceptedMembers.length === 0 && filteredPendingMembers.length === 0 ? (
-                <div className="p-6 text-center space-y-1.5">
-                  <div className="text-2xl">🔍</div>
-                  <p className="text-sm font-semibold text-foreground">No members found</p>
-                  <p className="text-xs text-muted-foreground">Try another name or username.</p>
-                </div>
-              ) : (
+        {/* Large Centered Avatar */}
+        {(() => {
+          const avatarNode = (
+            <div 
+              className={cn("relative group", isCreator && "cursor-pointer")}
+              onClick={() => {
+                if (isCreator && !isUploadingAvatar && !group.avatar_url) {
+                  fileInputRef.current?.click();
+                }
+              }}
+            >
+              <Avatar className="w-20 h-20 rounded-3xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 text-white shadow-lg ring-4 ring-emerald-50 animate-hero-avatar">
+                <AvatarImage src={group.avatar_url || undefined} alt={group.name} className="object-cover" />
+                <AvatarFallback className="bg-transparent font-display font-bold text-2xl text-white">
+                  {group.name.slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              
+              {isCreator && (
                 <>
-                  {filteredAcceptedMembers.map((member, index) => {
-                    const profile = profileMap.get(member.user_id);
-                    const displayName = nameOfDisplay(member.user_id);
-                    const username = profile?.username?.trim() ?? "";
-                    const initials = displayName.slice(0, 2).toUpperCase();
-                    const isYou = member.user_id === userId;
-                    const isOwner = member.user_id === group.created_by;
-                    return (
-                      <div key={member.id}>
-                        {index > 0 && <div className="h-px bg-border/40 my-1" />}
-                        <div className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/40 transition-colors">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-xs uppercase">
-                            {initials}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-foreground truncate">
-                              {displayName}{" "}
-                              {isYou && (
-                                <span className="text-xs text-muted-foreground font-normal">
-                                  (You)
-                                </span>
-                              )}
-                            </p>
-                            {username && (
-                              <p className="text-xs text-muted-foreground truncate">@{username}</p>
-                            )}
-                          </div>
-                          {isOwner && (
-                            <span className="text-[11px] font-medium text-muted-foreground bg-secondary px-2 py-0.5 rounded-md shrink-0">
-                              Admin
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {filteredPendingMembers.map((member, index) => {
-                    const profile = profileMap.get(member.user_id);
-                    const displayName = nameOfDisplay(member.user_id);
-                    const username = profile?.username?.trim() ?? "";
-                    const initials = displayName.slice(0, 2).toUpperCase();
-                    return (
-                      <div key={member.id}>
-                        {(filteredAcceptedMembers.length > 0 || index > 0) && (
-                          <div className="h-px bg-border/40 my-1" />
-                        )}
-                        <div className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/40 transition-colors opacity-75">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground font-bold text-xs uppercase">
-                            {initials}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-foreground truncate">
-                              {displayName}
-                            </p>
-                            {username && (
-                              <p className="text-xs text-muted-foreground truncate">@{username}</p>
-                            )}
-                          </div>
-                          <span className="text-[11px] font-medium text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-md shrink-0 flex items-center gap-1">
-                            <Clock className="h-3 w-3" /> Pending
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {isUploadingAvatar ? (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-3xl backdrop-blur-[1px]">
+                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                    </div>
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Camera className="w-6 h-6 text-white stroke-[2]" />
+                    </div>
+                  )}
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    className="hidden" 
+                    ref={fileInputRef}
+                    onChange={handleAvatarUpload}
+                  />
                 </>
               )}
             </div>
-          </PopoverContent>
-        </Popover>
+          );
 
-        {/* Pending Settlements Dropdown */}
-        <Popover
-          open={activeDropdown === "settlements"}
-          onOpenChange={(open) => {
-            setActiveDropdown(open ? "settlements" : null);
-            if (!open) setSettlementSearchQuery("");
-          }}
-        >
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              className="w-full justify-between h-11 px-4 rounded-2xl border-border/80 bg-card hover:bg-secondary/40 text-foreground font-medium shadow-sm transition-all active:scale-[0.98]"
-            >
-              <span className="flex items-center gap-2 font-display text-sm font-semibold truncate">
-                <HandCoins className="h-4 w-4 text-primary shrink-0" />
-                <span className="truncate">Pending Settlements ({visibleDebts.length})</span>
-              </span>
-              <ChevronDown
-                className={`h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 ${
-                  activeDropdown === "settlements" ? "rotate-180 text-primary" : ""
-                }`}
-              />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="end"
-            side="bottom"
-            sideOffset={6}
-            className="z-50 w-[92vw] sm:w-[360px] rounded-2xl border border-border/80 bg-popover/95 backdrop-blur-md p-0 text-popover-foreground shadow-2xl outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 duration-180 ease-out origin-top overflow-hidden"
+          if (isCreator && group.avatar_url) {
+            return (
+              <Popover open={avatarMenuOpen} onOpenChange={setAvatarMenuOpen}>
+                <PopoverTrigger asChild>
+                  {avatarNode}
+                </PopoverTrigger>
+                <PopoverContent side="bottom" align="center" className="w-40 p-1.5 rounded-2xl border-slate-100 shadow-xl bg-white z-50">
+                  <div className="space-y-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAvatarMenuOpen(false);
+                        fileInputRef.current?.click();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-xl transition-colors text-left"
+                    >
+                      <ImagePlus className="w-4 h-4 text-emerald-600" />
+                      <span>Change Photo</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors text-left"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>Remove Photo</span>
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            );
+          }
+          return avatarNode;
+        })()}
+
+        {/* Group Name with Pencil Edit Button */}
+        <div className="flex items-center justify-center gap-1.5 mt-2.5 max-w-full px-6">
+          <h1 className="font-display font-bold text-xl text-slate-900 tracking-tight truncate">
+            {group.name}
+          </h1>
+          <button
+            type="button"
+            onClick={() => {
+              setNewGroupName(group.name);
+              setEditNameOpen(true);
+            }}
+            className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-emerald-700 transition-colors shrink-0 active:scale-95"
+            title="Edit group name"
+            aria-label="Edit group name"
           >
-            {/* Header & Sticky Search Bar */}
-            <div className="p-3.5 border-b border-border/60 bg-popover/80 backdrop-blur-sm sticky top-0 z-10 space-y-2.5">
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Member Count Button — Opens Member List */}
+        <button
+          type="button"
+          onClick={() => setMembersListOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1 mt-1 rounded-full bg-slate-100/90 hover:bg-slate-200/80 text-slate-600 text-xs font-semibold transition-all active:scale-95 group/btn shadow-2xs border border-slate-200/50"
+        >
+          <Users className="w-3.5 h-3.5 text-slate-500 group-hover/btn:text-emerald-600 transition-colors" />
+          <span>{acceptedMembers.length + pendingMembers.length} members</span>
+          <ChevronRight className="w-3 h-3 text-slate-400 group-hover/btn:text-slate-600 transition-colors" />
+        </button>
+      </div>
+
+      {/* ── 2. Action Buttons (Horizontal Row: Add Expense, Settle Up, Chat) ── */}
+      <div className="grid grid-cols-3 gap-2.5 pt-1">
+        {/* Add Expense (Green, prominent) */}
+        <button
+          type="button"
+          onClick={() => setAddExpenseOpen(true)}
+          className="h-11 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-[var(--shadow-glow-green)] select-none"
+        >
+          <Plus className="w-4 h-4 stroke-[3]" />
+          <span>Add Expense</span>
+        </button>
+
+        {/* Settle Up (Specific to this group) */}
+        <Popover open={settlePopoverOpen} onOpenChange={setSettlePopoverOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="h-11 rounded-2xl bg-white border border-slate-200/90 text-slate-700 hover:bg-slate-50 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-sm select-none"
+            >
+              <HandCoins className="w-4 h-4 text-emerald-600 stroke-[2.2]" />
+              <span>Settle Up</span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="center" className="w-[320px] p-3 rounded-2xl border-slate-100 shadow-xl bg-white">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-sm font-bold flex items-center gap-2">
-                  <HandCoins className="h-4 w-4 text-primary" />
-                  Pending Settlements ({visibleDebts.length})
-                </h3>
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <Input
-                  type="text"
-                  placeholder="Search member or username..."
-                  value={settlementSearchQuery}
-                  onChange={(e) => setSettlementSearchQuery(e.target.value)}
-                  className="pl-8 pr-8 h-9 text-xs rounded-xl bg-secondary/50 border-border/60 focus-visible:ring-primary/40"
-                />
-                {settlementSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSettlementSearchQuery("")}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="max-h-[320px] overflow-y-auto p-2 space-y-1">
-              {visibleDebts.length === 0 ? (
-                <p className="p-4 text-center text-xs text-muted-foreground">
-                  Everyone's settled up!
+                <p className="font-display font-bold text-xs text-slate-400 uppercase tracking-wider">
+                  Group Settlements ({visibleDebts.length})
                 </p>
-              ) : filteredDebts.length === 0 ? (
-                <div className="p-6 text-center space-y-1.5">
-                  <div className="text-2xl">🔍</div>
-                  <p className="text-sm font-semibold text-foreground">No members found</p>
-                  <p className="text-xs text-muted-foreground">Try another name or username.</p>
-                </div>
+              </div>
+              {visibleDebts.length === 0 ? (
+                <p className="text-center text-xs text-slate-400 py-3 font-medium">All settled up in this group!</p>
               ) : (
-                filteredDebts.map((debt, index) => {
-                  const isOwed = debt.to === userId;
-                  const counterpartyId = isOwed ? debt.from : debt.to;
-                  const counterpartyName = nameOfDisplay(counterpartyId);
-                  const counterpartyUsername = profileMap.get(counterpartyId)?.username ?? null;
-                  const counterpartyInitials = counterpartyName.slice(0, 2).toUpperCase();
-                  const payeeUpiId = profileMap.get(debt.to)?.upi_id ?? null;
-
-                  return (
-                    <div key={`${debt.from}-${debt.to}`}>
-                      {index > 0 && <div className="h-px bg-border/40 my-1" />}
-                      <PendingSettlementDropdownRow
-                        debt={debt}
-                        userId={userId}
-                        counterpartyName={counterpartyName}
-                        counterpartyUsername={counterpartyUsername}
-                        counterpartyInitials={counterpartyInitials}
-                        groupName={group.name}
-                        payeeUpiId={payeeUpiId}
-                        groupId={groupId}
-                        counterpartyId={counterpartyId}
-                      />
-                    </div>
-                  );
-                })
+                <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  {visibleDebts.map((d) => (
+                    <PendingSettlementDropdownRow
+                      key={`${d.from}-${d.to}`}
+                      debt={d}
+                      userId={userId}
+                      counterpartyName={nameOfDisplay(d.to === userId ? d.from : d.to)}
+                      counterpartyUsername={profileMap.get(d.to === userId ? d.from : d.to)?.username ?? null}
+                      counterpartyInitials={nameOfDisplay(d.to === userId ? d.from : d.to).slice(0, 2).toUpperCase()}
+                      counterpartyAvatarUrl={profileMap.get(d.to === userId ? d.from : d.to)?.avatar_url || null}
+                      groupName={group.name}
+                      payeeUpiId={profileMap.get(d.to)?.upi_id ?? null}
+                      groupId={groupId}
+                      counterpartyId={d.to === userId ? d.from : d.to}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           </PopoverContent>
         </Popover>
+
+        {/* Chat (New Feature) */}
+        <button
+          type="button"
+          onClick={() => setChatOpen(true)}
+          className="h-11 rounded-2xl bg-white border border-slate-200/90 text-slate-700 hover:bg-slate-50 font-bold text-xs flex items-center justify-center gap-1.5 shadow-2xs transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-sm select-none"
+        >
+          <MessageSquare className="w-4 h-4 text-emerald-600 stroke-[2.2]" />
+          <span>Chat</span>
+        </button>
       </div>
 
-      <section className="space-y-3">
+      {/* ── 3. Balance Summary Card (3D Tilt, Wave, Split Bar, Toggle Breakdown) ── */}
+      <GroupBalanceCard
+        totalOwe={groupTotalOwe}
+        totalOwed={groupTotalOwed}
+        debts={visibleDebts}
+        userId={userId}
+        profileMap={profileMap}
+        nameOfDisplay={nameOfDisplay}
+        onOpenBalances={() => setMemberBalancesOpen(true)}
+      />
+
+      {/* ── 4. Expenses Section ── */}
+      <section className="space-y-3 pt-1">
         <div className="flex items-center justify-between">
-          <h2 className="font-display text-sm font-semibold text-muted-foreground">Expenses</h2>
-          <Suspense
-            fallback={
-              <Button size="sm" disabled>
-                Loading...
-              </Button>
-            }
-          >
-            <AddExpenseDialog
-              groupId={groupId}
-              userId={userId}
-              members={acceptedMembers.map((member) => ({
-                id: member.user_id,
-                name: nameOfDisplay(member.user_id),
-              }))}
-              trigger={<Button size="sm">Add expense</Button>}
-            />
-          </Suspense>
-        </div>
-        <DateRangeFilter
-          preset={datePreset}
-          customFrom={customFrom}
-          customTo={customTo}
-          fromDate={fromDate}
-          toDate={toDate}
-          onPresetChange={(p) => {
-            setDatePreset(p);
-            setVisibleExpenseCount(5);
-          }}
-          onCustomFromChange={(v) => {
-            setCustomFrom(v);
-            setVisibleExpenseCount(5);
-          }}
-          onCustomToChange={(v) => {
-            setCustomTo(v);
-            setVisibleExpenseCount(5);
-          }}
-        />
-        {filteredExpenses.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-border bg-card/50 p-4 text-center text-sm text-muted-foreground">
-            {expenses.length === 0
-              ? "No expenses yet. Add the first one!"
-              : "No expenses found for this date range."}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {visibleExpenses.map((expense) => (
-              <ExpenseRow
-                key={expense.id}
-                expense={expense}
-                currentUserId={userId}
-                creatorDisplayName={nameOfDisplay(expense.created_by)}
-                canRemove={canDeleteExpense(expense, userId)}
-                removeBusy={removeExpenseMutation.isPending}
-                onRemove={() => removeExpenseMutation.mutate(expense.id)}
-                initialSplits={splitsByExpense[expense.id]}
-                acceptedMembers={acceptedMembers.map((member) => ({
-                  id: member.user_id,
-                  name: nameOf(member.user_id),
-                }))}
-              />
-            ))}
-            {hasMoreExpenses ? (
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => setVisibleExpenseCount((count) => count + 5)}
+          <div className="flex items-center gap-2">
+            <h2 className="font-display text-base font-bold text-slate-900">Expenses</h2>
+            {datePreset !== "all" && (
+              <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-2 py-0.5 rounded-full">
+                {PRESETS.find((p) => p.id === datePreset)?.label || "Filtered"}
+              </span>
+            )}
+          </div>
+
+          {/* Range Button opposite to Expenses */}
+          <Popover open={rangePopoverOpen} onOpenChange={setRangePopoverOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "h-8 px-3 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-all border shadow-2xs select-none active:scale-95",
+                  datePreset !== "all"
+                    ? "bg-emerald-50 border-emerald-200 text-emerald-700 font-bold"
+                    : "bg-white border-slate-200/80 text-slate-700 hover:bg-slate-50 hover:text-slate-900",
+                )}
               >
-                Load more
-              </Button>
-            ) : null}
+                <CalendarDays className="w-3.5 h-3.5 text-emerald-600" />
+                <span>
+                  {datePreset === "all"
+                    ? "Range"
+                    : PRESETS.find((p) => p.id === datePreset)?.label || "Range"}
+                </span>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="w-[280px] p-2.5 rounded-2xl border-slate-100 shadow-xl bg-white space-y-2"
+            >
+              <div className="flex items-center justify-between px-1 pb-1 border-b border-slate-100">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                  Select Range
+                </span>
+                {datePreset !== "all" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDatePreset("all");
+                      setVisibleExpenseCount(6);
+                      setRangePopoverOpen(false);
+                    }}
+                    className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                {PRESETS.map((p) => {
+                  const isSelected = datePreset === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setDatePreset(p.id);
+                        setVisibleExpenseCount(6);
+                        if (p.id !== "custom") {
+                          setRangePopoverOpen(false);
+                        }
+                      }}
+                      className={cn(
+                        "w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-colors text-left",
+                        isSelected
+                          ? "bg-emerald-50 text-emerald-800 font-bold"
+                          : "text-slate-700 hover:bg-slate-50",
+                      )}
+                    >
+                      <span>{p.label}</span>
+                      {isSelected && <Check className="w-4 h-4 text-emerald-600" />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Date Range Pickers */}
+              {datePreset === "custom" && (
+                <div className="pt-2 border-t border-slate-100 space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500">From</label>
+                      <input
+                        type="date"
+                        value={customFrom}
+                        onChange={(e) => {
+                          setCustomFrom(e.target.value);
+                          setVisibleExpenseCount(6);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 outline-none mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500">To</label>
+                      <input
+                        type="date"
+                        value={customTo}
+                        onChange={(e) => {
+                          setCustomTo(e.target.value);
+                          setVisibleExpenseCount(6);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 outline-none mt-1"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="w-full h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                    onClick={() => setRangePopoverOpen(false)}
+                  >
+                    Apply Range
+                  </Button>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* Expense List */}
+        {filteredExpenses.length === 0 ? (
+          <div className="rounded-2xl bg-white border border-slate-100 p-8 text-center">
+            <p className="text-sm font-semibold text-slate-800">
+              No expenses in this period
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {expenses.length === 0
+                ? "Tap Add Expense to get started"
+                : "Try adjusting your filters"}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groupedExpenses.today.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 uppercase tracking-widest px-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-badge-pulse" />
+                  TODAY
+                </h3>
+                <div className="space-y-2">
+                  {groupedExpenses.today.map((expense, index) => (
+                    <motion.div
+                      key={expense.id}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.25,
+                        delay: Math.min(index * 0.05, 0.35),
+                        ease: [0.25, 1, 0.5, 1],
+                      }}
+                    >
+                      <ExpenseRow
+                        expense={expense}
+                        currentUserId={userId}
+                        creatorDisplayName={nameOfDisplay(expense.created_by)}
+                        canRemove={canDeleteExpense(expense, userId)}
+                        removeBusy={removeExpenseMutation.isPending}
+                        onRemove={() => removeExpenseMutation.mutate(expense.id)}
+                        initialSplits={splitsByExpense[expense.id]}
+                        acceptedMembers={acceptedMembers.map((member) => ({
+                          id: member.user_id,
+                          name: nameOf(member.user_id),
+                        }))}
+                      />
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groupedExpenses.yesterday.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                  YESTERDAY
+                </h3>
+                <div className="space-y-2">
+                  {groupedExpenses.yesterday.map((expense, index) => (
+                    <motion.div
+                      key={expense.id}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.25,
+                        delay: Math.min(index * 0.05, 0.35),
+                        ease: [0.25, 1, 0.5, 1],
+                      }}
+                    >
+                      <ExpenseRow
+                        expense={expense}
+                        currentUserId={userId}
+                        creatorDisplayName={nameOfDisplay(expense.created_by)}
+                        canRemove={canDeleteExpense(expense, userId)}
+                        removeBusy={removeExpenseMutation.isPending}
+                        onRemove={() => removeExpenseMutation.mutate(expense.id)}
+                        initialSplits={splitsByExpense[expense.id]}
+                        acceptedMembers={acceptedMembers.map((member) => ({
+                          id: member.user_id,
+                          name: nameOf(member.user_id),
+                        }))}
+                      />
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groupedExpenses.earlier.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                  EARLIER
+                </h3>
+                <div className="space-y-2">
+                  {groupedExpenses.earlier.map((expense, index) => (
+                    <motion.div
+                      key={expense.id}
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{
+                        duration: 0.25,
+                        delay: Math.min(index * 0.05, 0.35),
+                        ease: [0.25, 1, 0.5, 1],
+                      }}
+                    >
+                      <ExpenseRow
+                        expense={expense}
+                        currentUserId={userId}
+                        creatorDisplayName={nameOfDisplay(expense.created_by)}
+                        canRemove={canDeleteExpense(expense, userId)}
+                        removeBusy={removeExpenseMutation.isPending}
+                        onRemove={() => removeExpenseMutation.mutate(expense.id)}
+                        initialSplits={splitsByExpense[expense.id]}
+                        acceptedMembers={acceptedMembers.map((member) => ({
+                          id: member.user_id,
+                          name: nameOf(member.user_id),
+                        }))}
+                      />
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {hasMoreExpenses && (
+              <button
+                type="button"
+                className="w-full py-2.5 rounded-2xl bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-all active:scale-[0.99] shadow-2xs mt-4"
+                onClick={() => setVisibleExpenseCount((count) => count + 6)}
+              >
+                Load more expenses
+              </button>
+            )}
           </div>
         )}
       </section>
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DateRangeFilter — modern preset-based date filter
-// ─────────────────────────────────────────────────────────────────────────────
-type DatePreset = "all" | "today" | "yesterday" | "last7" | "thisMonth" | "custom";
+      {/* ── Add Expense Dialog Controlled ── */}
+      <Suspense fallback={null}>
+        <AddExpenseDialog
+          groupId={groupId}
+          userId={userId}
+          members={acceptedMembers.map((m) => ({
+            id: m.user_id,
+            name: nameOfDisplay(m.user_id),
+            avatar_url: profileMap.get(m.user_id)?.avatar_url || null,
+          }))}
+          open={addExpenseOpen}
+          onOpenChange={setAddExpenseOpen}
+        />
+      </Suspense>
 
-const PRESET_LABELS: Record<DatePreset, string> = {
-  all: "All time",
-  today: "Today",
-  yesterday: "Yesterday",
-  last7: "Last 7 days",
-  thisMonth: "This month",
-  custom: "Custom range",
-};
-
-const PRESETS: DatePreset[] = ["all", "today", "yesterday", "last7", "thisMonth", "custom"];
-
-function formatDisplayDate(iso: string): string {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function DateRangeFilter({
-  preset,
-  customFrom,
-  customTo,
-  fromDate,
-  toDate,
-  onPresetChange,
-  onCustomFromChange,
-  onCustomToChange,
-}: {
-  preset: DatePreset;
-  customFrom: string;
-  customTo: string;
-  fromDate: string;
-  toDate: string;
-  onPresetChange: (p: DatePreset) => void;
-  onCustomFromChange: (v: string) => void;
-  onCustomToChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  const hasActiveFilter = preset !== "all";
-  const rangeLabel =
-    fromDate && toDate && fromDate === toDate
-      ? formatDisplayDate(fromDate)
-      : fromDate && toDate
-        ? `${formatDisplayDate(fromDate)} – ${formatDisplayDate(toDate)}`
-        : fromDate
-          ? `From ${formatDisplayDate(fromDate)}`
-          : toDate
-            ? `Until ${formatDisplayDate(toDate)}`
-            : null;
-  return (
-    <div className="space-y-3">
-      {/* Pills container */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
-        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap mr-1 flex items-center gap-1.5">
-          <CalendarDays className="h-3.5 w-3.5" />
-          Date range
-        </span>
-        {PRESETS.map((p) => {
-          const isActive = preset === p;
-          return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => onPresetChange(p)}
-              className={[
-                "whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium transition-colors border",
-                isActive
-                  ? "border-primary bg-primary text-primary-foreground shadow-sm"
-                  : "border-border bg-card text-foreground hover:bg-secondary/60",
-              ].join(" ")}
-            >
-              {PRESET_LABELS[p]}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Custom range inputs */}
-      {preset === "custom" && (
-        <div className="grid grid-cols-2 gap-3 p-3 rounded-xl border border-border bg-card">
-          <div className="space-y-1.5">
-            <label htmlFor="custom-from-date" className="text-xs font-medium text-muted-foreground">
-              From
-            </label>
-            <Input
-              id="custom-from-date"
-              type="date"
-              value={customFrom}
-              max={customTo || undefined}
-              onChange={(e) => onCustomFromChange(e.target.value)}
-              className="h-9 text-sm"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="custom-to-date" className="text-xs font-medium text-muted-foreground">
-              To
-            </label>
-            <Input
-              id="custom-to-date"
-              type="date"
-              value={customTo}
-              min={customFrom || undefined}
-              onChange={(e) => onCustomToChange(e.target.value)}
-              className="h-9 text-sm"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Active range label */}
-      {hasActiveFilter && rangeLabel && (
-        <div className="flex items-center justify-between rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-4 w-4" />
-            <span className="font-medium">{rangeLabel}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => onPresetChange("all")}
-            className="flex items-center gap-1 text-xs font-semibold hover:text-primary/80"
-          >
-            Clear <X className="h-3 w-3" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-const PendingSettlementDropdownRow = memo(function PendingSettlementDropdownRow({
-  debt,
-  userId,
-  counterpartyName,
-  counterpartyUsername,
-  counterpartyInitials,
-  groupName,
-  payeeUpiId,
-  groupId,
-  counterpartyId,
-}: {
-  debt: PairwiseDebt;
-  userId: string;
-  counterpartyName: string;
-  counterpartyUsername?: string | null;
-  counterpartyInitials: string;
-  groupName: string;
-  payeeUpiId: string | null;
-  groupId: string;
-  counterpartyId: string;
-}) {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const isYouOwe = debt.from === userId;
-
-  return (
-    <>
-      <div
-        onClick={() => setSheetOpen(true)}
-        className="flex items-center gap-3 py-2 px-2.5 rounded-xl hover:bg-secondary/50 transition-colors cursor-pointer group select-none"
-      >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary text-primary text-xs font-bold uppercase group-hover:scale-105 transition-transform">
-          {counterpartyInitials}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center min-w-0 gap-1.5">
-            <span className="text-sm font-semibold text-foreground shrink-0 group-hover:text-primary transition-colors">
-              {counterpartyName}
-            </span>
-            <span className="text-xs text-muted-foreground truncate max-w-[90px] sm:max-w-[120px]">
-              ({groupName})
-            </span>
-          </div>
-          {counterpartyUsername ? (
-            <p className="text-xs text-muted-foreground truncate">@{counterpartyUsername}</p>
-          ) : (
-            <p className="text-xs text-muted-foreground">{isYouOwe ? "You owe" : "Owes you"}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span
-            className={`text-sm font-display font-bold ${isYouOwe ? "text-destructive" : "text-primary"}`}
-          >
-            ₹{debt.amount.toFixed(2)}
-          </span>
-          <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-        </div>
-      </div>
-
-      <ExpenseBreakdownSheet
-        open={sheetOpen}
-        onOpenChange={setSheetOpen}
-        currentUserId={userId}
-        counterpartyId={counterpartyId}
-        displayName={counterpartyName}
-        groupName={groupName}
-        balanceAmount={debt.amount}
+      {/* ── Invite Member Dialog Controlled ── */}
+      <InviteDialog
+        groupId={groupId}
+        groupName={group.name}
+        inviterId={userId}
+        open={inviteModalOpen}
+        onOpenChange={setInviteModalOpen}
       />
-    </>
-  );
-});
 
-const DebtRow = memo(function DebtRow({
-  debt,
-  userId,
-  nameOf,
-  payeeUpiId,
-  groupId,
-}: {
-  debt: PairwiseDebt;
-  userId: string;
-  nameOf: (id: string) => string;
-  payeeUpiId: string | null;
-  groupId: string;
-}) {
-  const debtText =
-    debt.from === userId
-      ? `You owe ${nameOf(debt.to)}`
-      : debt.to === userId
-        ? `${nameOf(debt.from)} owes you`
-        : `${nameOf(debt.from)} owes ${nameOf(debt.to)}`;
+      {/* ── Group Settings Dialog ── */}
+      <GroupSettingsDialog
+        group={group}
+        members={acceptedMembers}
+        pendingMembers={pendingMembers}
+        profileMap={profileMap}
+        currentUserId={userId}
+        isCreator={isCreator}
+        open={settingsModalOpen}
+        onOpenChange={setSettingsModalOpen}
+        onInviteClick={() => {
+          setSettingsModalOpen(false);
+          setInviteModalOpen(true);
+        }}
+        onLeave={() => leaveMutation.mutate()}
+        leaveBusy={leaveMutation.isPending}
+        onDelete={() => deleteMutation.mutate()}
+        deleteBusy={deleteMutation.isPending}
+      />
 
-  const amountColor =
-    debt.from === userId
-      ? "text-red-500"
-      : debt.to === userId
-        ? "text-primary"
-        : "text-muted-foreground";
+      {/* ── Member Balances Dialog ── */}
+      <MemberBalancesDialog
+        open={memberBalancesOpen}
+        onOpenChange={setMemberBalancesOpen}
+        debts={visibleDebts}
+        userId={userId}
+        profileMap={profileMap}
+        nameOfDisplay={nameOfDisplay}
+        groupName={group.name}
+        groupId={groupId}
+      />
 
-  const [selectedExpenses, setSelectedExpenses] = useState<Record<string, number> | undefined>(
-    undefined,
-  );
+      {/* ── Dedicated Group Chat Page ── */}
+      {chatOpen && (
+        <GroupChatPage
+          group={group}
+          currentUserId={userId}
+          members={members}
+          profileMap={profileMap}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
 
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="min-w-0 flex-1 text-sm">
-        <span className="font-semibold">{debtText}</span>
-        <span className={`ml-1 font-display font-bold ${amountColor}`}>
-          <CountUpCurrency amount={debt.amount} />
-        </span>
-      </div>
-      {debt.from === userId ? (
-        <div className="flex gap-2">
-          <QrPayDialog
-            payeeName={nameOf(debt.to)}
-            payeeUpiId={payeeUpiId}
-            amount={debt.amount}
-            baseAmount={debt.amount}
-            note={`Splity settlement`}
-            currentUserId={userId}
-            counterpartyId={debt.to}
-            groupId={groupId}
-            onSelectionChange={setSelectedExpenses}
-          />
-          <PaidDialog
-            payeeName={nameOf(debt.to)}
-            amount={debt.amount}
-            baseAmount={debt.amount}
-            groupId={groupId}
-            payeeId={debt.to}
-            payerId={userId}
-            selectedExpenses={selectedExpenses}
-            onSelectionChange={setSelectedExpenses}
-          />
-        </div>
-      ) : null}
+      {/* ── Edit Group Name Dialog ── */}
+      <Dialog open={editNameOpen} onOpenChange={setEditNameOpen}>
+        <DialogContent className="max-w-sm rounded-3xl p-6 border-slate-100 shadow-2xl bg-white space-y-4">
+          <DialogHeader className="p-0">
+            <DialogTitle className="font-display font-bold text-lg text-slate-900">
+              Edit Group Name
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="group-name-input" className="text-xs font-semibold text-slate-500">
+              Group Name
+            </Label>
+            <Input
+              id="group-name-input"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="Enter group name"
+              className="h-11 rounded-xl border-slate-200 focus:border-emerald-600 font-medium"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newGroupName.trim() && !isUpdatingName) {
+                  handleUpdateGroupName();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter className="flex gap-2 pt-2 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEditNameOpen(false)}
+              className="rounded-xl h-10 flex-1 sm:flex-none"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleUpdateGroupName}
+              disabled={!newGroupName.trim() || newGroupName.trim() === group.name || isUpdatingName}
+              className="rounded-xl h-10 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex-1 sm:flex-none"
+            >
+              {isUpdatingName ? <Loader2 className="w-4 h-4 animate-spin" /> : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Group Members List Dialog ── */}
+      <GroupMembersDialog
+        group={group}
+        members={acceptedMembers}
+        pendingMembers={pendingMembers}
+        profileMap={profileMap}
+        currentUserId={userId}
+        open={membersListOpen}
+        onOpenChange={setMembersListOpen}
+        onInviteClick={() => setInviteModalOpen(true)}
+        myFriendsIds={new Set((friendsQuery.data ?? []).map(f => f.friend_id))}
+        requestedUserIds={requestedUserIds}
+        onAddFriend={(friendId) => addFriendMutation.mutate(friendId)}
+        isAddingFriend={addFriendMutation.isPending ? (addFriendMutation.variables as string) : null}
+      />
     </div>
   );
-});
-
-function formatCardDate(isoString: string): string {
-  const d = new Date(isoString);
-  if (isNaN(d.getTime())) return "";
-  const day = d.getDate();
-  const monthNames = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  const month = monthNames[d.getMonth()];
-  const year = d.getFullYear();
-
-  let hours = d.getHours();
-  const minutes = d.getMinutes().toString().padStart(2, "0");
-  const ampm = hours >= 12 ? "PM" : "AM";
-  hours = hours % 12;
-  if (hours === 0) hours = 12;
-
-  return `${day} ${month} ${year} • ${hours}:${minutes} ${ampm}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GroupBalanceCard with 3D Tilt, Continuous Wave, Split Bar & Breakdown Toggle
+// ─────────────────────────────────────────────────────────────────────────────
+function GroupBalanceCard({
+  totalOwe,
+  totalOwed,
+  debts,
+  userId,
+  profileMap,
+  nameOfDisplay,
+  onOpenBalances,
+}: {
+  totalOwe: number;
+  totalOwed: number;
+  debts: PairwiseDebt[];
+  userId: string;
+  profileMap: Map<string, Profile>;
+  nameOfDisplay: (id: string) => string;
+  onOpenBalances: () => void;
+}) {
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [tilt, setTilt] = useState({ x: 0, y: 0, active: false });
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (typeof window !== "undefined" && window.matchMedia("(hover: none)").matches) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width - 0.5;
+    const py = (e.clientY - rect.top) / rect.height - 0.5;
+    setTilt({
+      x: -py * 10, // max +/- 5 deg
+      y: px * 6,   // max +/- 3 deg
+      active: true,
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTilt({ x: 0, y: 0, active: false });
+  };
+
+  const net = totalOwe - totalOwed;
+  const isNegative = net > 0.005;
+  const isPositive = net < -0.005;
+
+  let waveColor1 = "text-slate-300/40";
+  let waveColor2 = "text-slate-400/30";
+  let cardTheme =
+    "bg-gradient-to-br from-slate-50 via-emerald-50/20 to-slate-100/50 border-slate-200/80 shadow-[0_2px_12px_rgba(15,23,42,0.04)] hover:shadow-[0_12px_28px_rgba(15,23,42,0.1)]";
+
+  if (isNegative) {
+    cardTheme =
+      "bg-gradient-to-br from-rose-50/90 via-pink-50/60 to-rose-100/40 border-rose-200/70 shadow-[0_2px_12px_rgba(244,63,94,0.06)] hover:shadow-[0_12px_28px_rgba(244,63,94,0.18)]";
+    waveColor1 = "text-rose-400/40";
+    waveColor2 = "text-pink-400/30";
+  } else if (isPositive) {
+    cardTheme =
+      "bg-gradient-to-br from-emerald-50/90 via-teal-50/60 to-emerald-100/40 border-emerald-200/70 shadow-[0_2px_12px_rgba(16,185,129,0.06)] hover:shadow-[0_12px_28px_rgba(16,185,129,0.18)]";
+    waveColor1 = "text-emerald-400/40";
+    waveColor2 = "text-teal-400/30";
+  }
+
+  const totalSum = totalOwe + totalOwed;
+  const oweRatio = totalSum > 0 ? (totalOwe / totalSum) * 100 : 50;
+
+  return (
+    <div
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        transform: tilt.active
+          ? `perspective(1000px) rotateX(${tilt.x.toFixed(2)}deg) rotateY(${tilt.y.toFixed(2)}deg)`
+          : "perspective(1000px) rotateX(0deg) rotateY(0deg)",
+        transition: tilt.active
+          ? "transform 0.1s ease-out, box-shadow 0.25s ease-out"
+          : "transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.45s ease-out",
+        transformStyle: "preserve-3d",
+      }}
+      className={cn(
+        "group relative w-full min-h-[148px] rounded-3xl border overflow-hidden select-none will-change-transform transition-all",
+        cardTheme,
+      )}
+    >
+      {/* Top Right Toggle Button */}
+      <button
+        type="button"
+        onClick={() => setShowBreakdown((prev) => !prev)}
+        className="absolute top-3.5 right-3.5 z-20 w-8 h-8 rounded-full bg-white/90 border border-slate-200/80 flex items-center justify-center text-slate-600 hover:bg-white active:scale-90 shadow-2xs transition-all"
+        title={showBreakdown ? "Show summary" : "Show member breakdown"}
+        aria-label="Toggle card view"
+      >
+        <ArrowLeftRight
+          className={cn(
+            "w-3.5 h-3.5 stroke-[2.2] transition-transform duration-300",
+            showBreakdown && "rotate-180",
+          )}
+        />
+      </button>
+
+      {/* View 1: Main Summary & Red/Green Balance Bar */}
+      <div
+        className={cn(
+          "p-4 sm:p-5 flex flex-col justify-between transition-all duration-300 ease-out z-10 relative cursor-pointer",
+          showBreakdown
+            ? "-translate-x-full opacity-0 pointer-events-none absolute inset-0"
+            : "translate-x-0 opacity-100",
+        )}
+        onClick={onOpenBalances}
+      >
+        <div>
+          <div className="flex items-center justify-between pr-10">
+            <span className="font-display font-bold text-xs text-slate-500 uppercase tracking-wider">
+              Balance Summary
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            <div>
+              <span className="text-xs font-bold text-rose-500">You owe</span>
+              <p className="font-display font-bold text-xl text-rose-600 mt-0.5">
+                ₹{totalOwe.toFixed(2)}
+              </p>
+            </div>
+            <div className="text-right pr-6">
+              <span className="text-xs font-bold text-emerald-600">Owed to you</span>
+              <p className="font-display font-bold text-xl text-emerald-600 mt-0.5">
+                ₹{totalOwed.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-1.5">
+          {/* Red/Green Balance Bar */}
+          <div className="h-2 w-full rounded-full bg-slate-200/60 flex overflow-hidden">
+            <div
+              style={{ width: `${totalSum > 0 ? oweRatio : 50}%` }}
+              className="bg-rose-500 h-full transition-all duration-300"
+            />
+            <div
+              style={{ width: `${totalSum > 0 ? 100 - oweRatio : 50}%` }}
+              className="bg-emerald-500 h-full transition-all duration-300"
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium">
+            <span>Tap card to view member balances</span>
+            <span className="font-semibold text-emerald-700">View All →</span>
+          </div>
+        </div>
+      </div>
+
+      {/* View 2: Quick Member Breakdown View */}
+      <div
+        className={cn(
+          "p-4 sm:p-5 flex flex-col justify-between transition-all duration-300 ease-out z-10 relative cursor-pointer",
+          showBreakdown
+            ? "translate-x-0 opacity-100"
+            : "translate-x-full opacity-0 pointer-events-none absolute inset-0",
+        )}
+        onClick={onOpenBalances}
+      >
+        <div>
+          <div className="flex items-center justify-between pr-10">
+            <span className="font-display font-bold text-xs text-slate-500 uppercase tracking-wider">
+              Pairwise Breakdown
+            </span>
+          </div>
+
+          <div className="mt-2 space-y-1 pr-8 max-h-[84px] overflow-y-auto">
+            {debts.length === 0 ? (
+              <p className="text-xs text-slate-400 font-medium py-2">No pending balances in this group.</p>
+            ) : (
+              debts.slice(0, 3).map((d) => {
+                const isOwe = d.from === userId;
+                const otherId = isOwe ? d.to : d.from;
+                return (
+                  <div key={`${d.from}-${d.to}`} className="flex items-center justify-between text-xs py-0.5">
+                    <span className="font-semibold text-slate-700 truncate max-w-[140px]">
+                      {isOwe ? `To ${nameOfDisplay(otherId)}` : `From ${nameOfDisplay(otherId)}`}
+                    </span>
+                    <span className={cn("font-bold font-display", isOwe ? "text-rose-600" : "text-emerald-600")}>
+                      {isOwe ? `-₹` : `+₹`}{d.amount.toFixed(2)}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <p className="text-[11px] text-slate-400 font-medium mt-2">
+          Tap card for full balances & settlement options
+        </p>
+      </div>
+
+      {/* Subtle Continuously Moving Wave Background (10s loop) */}
+      <div className="absolute inset-x-0 bottom-0 pointer-events-none overflow-hidden h-16 opacity-40 z-0">
+        <div className="absolute bottom-0 left-0 w-full h-full flex overflow-hidden">
+          <svg
+            viewBox="0 0 1200 120"
+            preserveAspectRatio="none"
+            className={cn("w-[200%] min-w-[200%] h-14 animate-wave-flow shrink-0", waveColor1)}
+            fill="currentColor"
+          >
+            <path d="M0,60 C150,20 300,90 450,40 C525,15 570,35 600,60 C750,20 900,90 1050,40 C1125,15 1170,35 1200,60 L1200,120 L0,120 Z" />
+          </svg>
+        </div>
+        <div className="absolute bottom-0 left-0 w-full h-full flex overflow-hidden opacity-60">
+          <svg
+            viewBox="0 0 1200 120"
+            preserveAspectRatio="none"
+            className={cn("w-[200%] min-w-[200%] h-12 animate-wave-flow-slow shrink-0", waveColor2)}
+            fill="currentColor"
+          >
+            <path d="M0,45 C150,75 300,15 450,65 C525,90 570,70 600,45 C750,75 900,15 1050,65 C1125,90 1170,70 1200,45 L1200,120 L0,120 Z" />
+          </svg>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ExpenseRow with Category Icons, Hover 3D Scale/Lift & Expense Details Modal
+// ─────────────────────────────────────────────────────────────────────────────
 const ExpenseRow = memo(function ExpenseRow({
   expense,
   currentUserId,
@@ -1014,29 +1388,12 @@ const ExpenseRow = memo(function ExpenseRow({
   const descLower = cleanDescription.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
 
-  let title = cleanDescription;
-  let secondLine = "";
-  let paymentMethod = "";
+  const d = new Date(expense.created_at);
+  const timeStr = !isNaN(d.getTime())
+    ? d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    : "";
 
-  if (isSettlement) {
-    const isUpi = descLower.includes("upi") || descLower.includes("online");
-    title = isUpi ? "UPI Settlement" : "Cash Settlement";
-    paymentMethod = isUpi ? "UPI" : "Cash";
-
-    if (expense.created_by === currentUserId) {
-      secondLine = "Settled by You";
-    } else {
-      secondLine = `Settled with ${creatorDisplayName}`;
-    }
-  } else {
-    if (expense.created_by === currentUserId) {
-      secondLine = "Added by You";
-    } else {
-      secondLine = `Added by ${creatorDisplayName}`;
-    }
-  }
-
-  const thirdLine = formatCardDate(expense.created_at);
+  const subtitle = `Paid by ${creatorDisplayName}${timeStr ? ` • ${timeStr}` : ""}`;
 
   return (
     <>
@@ -1044,34 +1401,25 @@ const ExpenseRow = memo(function ExpenseRow({
         role="button"
         tabIndex={0}
         onClick={() => setDetailsOpen(true)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setDetailsOpen(true);
-          }
-        }}
-        className="flex items-center gap-3 rounded-2xl border border-border bg-card p-4 shadow-xs transition-colors hover:border-primary/40 cursor-pointer select-none active:scale-[0.99]"
+        className="flex items-center justify-between p-3.5 rounded-2xl bg-white border border-slate-100 shadow-[var(--shadow-1)] card-hover-green cursor-pointer select-none"
       >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary text-primary">
-          <Receipt className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-foreground">{title}</p>
-          <p className="text-xs text-muted-foreground truncate">{secondLine}</p>
-          <p className="text-xs text-muted-foreground truncate">{thirdLine}</p>
-        </div>
-        <div className="flex flex-col items-end shrink-0">
-          <div className="text-right">
-            <p className="font-display font-bold text-foreground">
-              <CountUpCurrency amount={Number(expense.amount)} />
-            </p>
-            {isSettlement ? <p className="text-xs text-muted-foreground">{paymentMethod}</p> : null}
+        <div className="flex items-center gap-3.5 min-w-0">
+          <CategoryIcon description={cleanDescription} size="md" />
+          <div className="min-w-0">
+            <p className="font-display font-bold text-sm text-slate-900 truncate">{cleanDescription}</p>
+            <p className="text-xs text-slate-400 font-medium truncate mt-0.5">{subtitle}</p>
           </div>
-          {canShowActions ? (
-            <div
-              className="mt-1 flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2.5"
-              onClick={(e) => e.stopPropagation()}
-            >
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 pl-2">
+          <div className="text-right">
+            <p className="font-display font-bold text-sm sm:text-base text-slate-900">
+              ₹{Number(expense.amount).toFixed(2)}
+            </p>
+          </div>
+
+          {canShowActions && (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <Suspense fallback={null}>
                 <AddExpenseDialog
                   userId={currentUserId}
@@ -1081,32 +1429,26 @@ const ExpenseRow = memo(function ExpenseRow({
                   initialSplits={initialSplits}
                   members={acceptedMembers}
                   trigger={
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-6 w-6 rounded-md text-emerald-600 hover:bg-emerald-50 hover:text-emerald-500 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                    <button
+                      type="button"
+                      className="p-1 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
                       title="Edit"
-                      aria-label="Edit expense"
-                      onClick={(e) => e.stopPropagation()}
                     >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
                   }
                 />
               </Suspense>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button
-                    size="icon"
-                    variant="ghost"
+                  <button
+                    type="button"
                     disabled={removeBusy}
-                    className="h-6 w-6 rounded-md text-red-600 hover:bg-red-50 hover:text-red-500 dark:text-red-400 dark:hover:bg-red-950/40"
+                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                     title="Delete"
-                    aria-label="Delete expense"
-                    onClick={(e) => e.stopPropagation()}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </AlertDialogTrigger>
                 <AlertDialogContent onClick={(e) => e.stopPropagation()}>
                   <AlertDialogHeader>
@@ -1124,168 +1466,841 @@ const ExpenseRow = memo(function ExpenseRow({
                 </AlertDialogContent>
               </AlertDialog>
             </div>
-          ) : null}
+          )}
         </div>
       </div>
 
-      <ExpenseDetailsModal
+      <ExpenseDetailsSheet
         open={detailsOpen}
         onOpenChange={setDetailsOpen}
         expense={expense}
         currentUserId={currentUserId}
         creatorDisplayName={creatorDisplayName}
         initialSplits={initialSplits}
-        acceptedMembers={acceptedMembers}
       />
     </>
   );
 });
 
-function LeaveGroupButton({
-  groupName,
-  busy,
-  onLeave,
+// ─────────────────────────────────────────────────────────────────────────────
+// GroupMembersDialog — Dedicated modal showing all group members
+// ─────────────────────────────────────────────────────────────────────────────
+function GroupMembersDialog({
+  group,
+  members,
+  pendingMembers,
+  profileMap,
+  currentUserId,
+  open,
+  onOpenChange,
+  onInviteClick,
+  myFriendsIds,
+  requestedUserIds,
+  onAddFriend,
+  isAddingFriend,
 }: {
-  groupName: string;
-  busy: boolean;
-  onLeave: () => void;
+  group: Group;
+  members: GroupMember[];
+  pendingMembers: GroupMember[];
+  profileMap: Map<string, Profile>;
+  currentUserId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onInviteClick: () => void;
+  myFriendsIds: Set<string>;
+  requestedUserIds: Set<string>;
+  onAddFriend: (userId: string) => void;
+  isAddingFriend: string | null;
 }) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <LogOut className="mr-1.5 h-4 w-4" /> Leave
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Leave this group?</AlertDialogTitle>
-          <AlertDialogDescription>
-            You won't see expenses or balances for "{groupName}" anymore. You can be re-invited
-            later.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onLeave} disabled={busy}>
-            Leave
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
+  const totalCount = members.length + pendingMembers.length;
 
-function DeleteGroupButton({
-  groupName,
-  busy,
-  onDelete,
-}: {
-  groupName: string;
-  busy: boolean;
-  onDelete: () => void;
-}) {
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="destructive" size="sm">
-          <Trash2 className="mr-1.5 h-4 w-4" /> Delete
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete "{groupName}"?</AlertDialogTitle>
-          <AlertDialogDescription>
-            This permanently deletes the group, all expenses, and member data. This cannot be
-            undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            onClick={onDelete}
-            disabled={busy}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md rounded-3xl p-0 overflow-hidden border-slate-100 shadow-2xl bg-white flex flex-col max-h-[85vh]">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-100 shrink-0 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <DialogTitle className="font-display font-bold text-base text-slate-900 leading-tight">
+                Group Members
+              </DialogTitle>
+              <p className="text-xs text-slate-400 font-medium">
+                {totalCount} {totalCount === 1 ? "member" : "members"} in {group.name}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              onOpenChange(false);
+              onInviteClick();
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs transition-all active:scale-95"
           >
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Invite</span>
+          </button>
+        </div>
+
+        {/* Member List */}
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
+          {/* Active Members */}
+          <div className="space-y-2">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider px-1">
+              Active Members ({members.length})
+            </span>
+            <div className="space-y-1.5">
+              {members.map((m) => {
+                const p = profileMap.get(m.user_id);
+                const isMe = m.user_id === currentUserId;
+                const isAdmin = m.user_id === group.created_by;
+                const dName = isMe
+                  ? "You"
+                  : p?.full_name?.trim() || p?.username?.trim() || "User";
+                const avatarText = (p?.full_name || p?.username || "U").slice(0, 2).toUpperCase();
+
+                return (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50/80 border border-slate-100 hover:bg-slate-100/60 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="w-10 h-10 rounded-2xl ring-2 ring-white shadow-2xs shrink-0">
+                        <AvatarImage src={p?.avatar_url || undefined} alt={dName} />
+                        <AvatarFallback className="bg-gradient-to-br from-emerald-600 to-teal-700 text-white text-xs font-bold">
+                          {avatarText}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs font-bold text-slate-800 truncate">{dName}</p>
+                          {isMe && (
+                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded-md">
+                              You
+                            </span>
+                          )}
+                        </div>
+                        {p?.username && (
+                          <p className="text-[11px] text-slate-400 truncate">@{p.username}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isAdmin && (
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg shadow-2xs">
+                          Admin
+                        </span>
+                      )}
+                      {!isMe && !myFriendsIds.has(m.user_id) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onAddFriend(m.user_id);
+                          }}
+                          disabled={isAddingFriend === m.user_id || requestedUserIds.has(m.user_id)}
+                          className={cn(
+                            "text-[10px] font-bold px-2 py-1 rounded-lg shadow-2xs transition-colors flex items-center gap-1",
+                            requestedUserIds.has(m.user_id)
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                          )}
+                        >
+                          {isAddingFriend === m.user_id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : requestedUserIds.has(m.user_id) ? (
+                            <Check className="w-3 h-3" />
+                          ) : (
+                            <UserPlus className="w-3 h-3" />
+                          )}
+                          {requestedUserIds.has(m.user_id) ? "Pending" : "Add"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Pending Invitations */}
+          {pendingMembers.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-amber-600 uppercase tracking-wider px-1 flex items-center gap-1.5">
+                <Clock className="w-3 h-3" />
+                Pending Invites ({pendingMembers.length})
+              </span>
+              <div className="space-y-1.5">
+                {pendingMembers.map((m) => {
+                  const p = profileMap.get(m.user_id);
+                  const dName = p?.full_name?.trim() || p?.username?.trim() || "Invited User";
+                  const avatarText = dName.slice(0, 2).toUpperCase();
+
+                  return (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between p-2.5 rounded-2xl bg-amber-50/40 border border-amber-100/80"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar className="w-9 h-9 rounded-2xl opacity-80 shrink-0">
+                          <AvatarImage src={p?.avatar_url || undefined} alt={dName} />
+                          <AvatarFallback className="bg-amber-100 text-amber-800 text-xs font-bold">
+                            {avatarText}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-700 truncate">{dName}</p>
+                          {p?.username && (
+                            <p className="text-[10px] text-slate-400 truncate">@{p.username}</p>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-700 bg-amber-100/70 border border-amber-200/60 px-2 py-0.5 rounded-lg">
+                        Pending
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MemberBalancesDialog — Clickable popup showing all member balances
+// ─────────────────────────────────────────────────────────────────────────────
+function MemberBalancesDialog({
+  open,
+  onOpenChange,
+  debts,
+  userId,
+  profileMap,
+  nameOfDisplay,
+  groupName,
+  groupId,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  debts: PairwiseDebt[];
+  userId: string;
+  profileMap: Map<string, Profile>;
+  nameOfDisplay: (id: string) => string;
+  groupName: string;
+  groupId: string;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md rounded-3xl p-0 overflow-hidden border-slate-100 shadow-2xl bg-white">
+        <DialogHeader className="px-6 py-4 border-b border-slate-100 shrink-0">
+          <DialogTitle className="font-display font-bold text-lg text-slate-900">
+            Group Member Balances
+          </DialogTitle>
+          <p className="text-xs text-slate-400 font-medium">{groupName}</p>
+        </DialogHeader>
+
+        <div className="p-6 space-y-3 max-h-[60vh] overflow-y-auto">
+          {debts.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-400 font-medium">
+              Everyone is settled up in this group!
+            </div>
+          ) : (
+            debts.map((d) => (
+              <PendingSettlementDropdownRow
+                key={`${d.from}-${d.to}`}
+                debt={d}
+                userId={userId}
+                counterpartyName={nameOfDisplay(d.to === userId ? d.from : d.to)}
+                counterpartyUsername={profileMap.get(d.to === userId ? d.from : d.to)?.username ?? null}
+                counterpartyInitials={nameOfDisplay(d.to === userId ? d.from : d.to).slice(0, 2).toUpperCase()}
+                counterpartyAvatarUrl={profileMap.get(d.to === userId ? d.from : d.to)?.avatar_url || null}
+                groupName={groupName}
+                payeeUpiId={profileMap.get(d.to)?.upi_id ?? null}
+                groupId={groupId}
+                counterpartyId={d.to === userId ? d.from : d.to}
+              />
+            ))
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GroupSettingsDialog — Info, Members, and Delete options
+// ─────────────────────────────────────────────────────────────────────────────
+function GroupSettingsDialog({
+  group,
+  members,
+  pendingMembers,
+  profileMap,
+  currentUserId,
+  isCreator,
+  open,
+  onOpenChange,
+  onInviteClick,
+  onLeave,
+  leaveBusy,
+  onDelete,
+  deleteBusy,
+}: {
+  group: Group;
+  members: GroupMember[];
+  pendingMembers: GroupMember[];
+  profileMap: Map<string, Profile>;
+  currentUserId: string;
+  isCreator: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onInviteClick: () => void;
+  onLeave: () => void;
+  leaveBusy: boolean;
+  onDelete: () => void;
+  deleteBusy: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md rounded-3xl p-0 overflow-hidden border-slate-100 shadow-2xl bg-white">
+        <DialogHeader className="px-6 py-4 border-b border-slate-100 shrink-0">
+          <DialogTitle className="font-display font-bold text-lg text-slate-900">
+            Group Settings
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+          {/* Group Info */}
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-bold flex items-center justify-center text-base">
+              {group.name.slice(0, 2).toUpperCase()}
+            </div>
+            <div>
+              <p className="font-display font-bold text-base text-slate-900">{group.name}</p>
+              <p className="text-xs text-slate-400">
+                Created {new Date(group.created_at).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}
+              </p>
+            </div>
+          </div>
+
+          {/* Members List */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Members ({members.length + pendingMembers.length})
+              </span>
+              <button
+                type="button"
+                onClick={onInviteClick}
+                className="text-xs font-bold text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" /> Invite
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              {members.map((m) => {
+                const p = profileMap.get(m.user_id);
+                const dName =
+                  m.user_id === currentUserId
+                    ? "You"
+                    : p?.full_name?.trim() || p?.username?.trim() || "User";
+                return (
+                  <div key={m.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-50">
+                    <div className="flex items-center gap-2.5">
+                      <Avatar className="w-8 h-8 rounded-full shrink-0 ring-1 ring-slate-200/60 shadow-2xs">
+                        <AvatarImage src={p?.avatar_url || undefined} alt={dName} />
+                        <AvatarFallback className="bg-emerald-100 text-emerald-800 font-bold text-xs">
+                          {dName.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{dName}</p>
+                        {p?.username && <p className="text-[10px] text-slate-400">@{p.username}</p>}
+                      </div>
+                    </div>
+                    {m.user_id === group.created_by && (
+                      <span className="text-[10px] font-bold text-slate-500 bg-white border px-2 py-0.5 rounded-md">
+                        Admin
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="pt-2 border-t border-slate-100 space-y-2">
+            <span className="text-xs font-bold text-rose-500 uppercase tracking-wider">Danger Zone</span>
+            {!isCreator ? (
+              <button
+                type="button"
+                onClick={onLeave}
+                disabled={leaveBusy}
+                className="w-full py-2.5 rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 text-xs font-bold transition-colors"
+              >
+                Leave Group
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleteBusy}
+                className="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors shadow-xs"
+              >
+                Delete Group
+              </button>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InviteDialog — tabbed: Friends (from friend list) | Search (by username)
+// ─────────────────────────────────────────────────────────────────────────────
 function InviteDialog({
   groupId,
   groupName,
   inviterId,
+  open: controlledOpen,
+  onOpenChange: setControlledOpen,
 }: {
   groupId: string;
   groupName: string;
   inviterId: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = isControlled ? setControlledOpen! : setInternalOpen;
+
+  const [tab, setTab] = useState<"friends" | "search">("friends");
   const [username, setUsername] = useState("");
+  const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [invitedUserIds, setInvitedUserIds] = useState<Set<string>>(new Set());
+  const [invitingUserId, setInvitingUserId] = useState<string | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [selectedFriends, setSelectedFriends] = useState<string[]>([]);
+  const [invitingAll, setInvitingAll] = useState(false);
   const queryClient = useQueryClient();
 
-  const mutation = useMutation({
+  const handleSearchUsers = (val: string) => {
+    setUsername(val);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!val.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await searchUsersByName(val.trim());
+        setSearchResults(res.filter((u) => u.id !== inviterId));
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 250);
+  };
+
+  const handleInviteUser = async (targetUserId: string) => {
+    setInvitingUserId(targetUserId);
+    try {
+      await inviteToGroup({ groupId, groupName, targetUserId, inviterId });
+      setInvitedUserIds((prev) => new Set(prev).add(targetUserId));
+      toast.success("Invite sent!");
+      queryClient.invalidateQueries({ queryKey: ["group-members", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["friends-not-in-group", inviterId, groupId] });
+    } catch (err: any) {
+      toast.error(getCleanErrorMessage(err));
+    } finally {
+      setInvitingUserId(null);
+    }
+  };
+
+  // Load friends not yet in this group
+  const friendsQuery = useQuery({
+    queryKey: ["friends-not-in-group", inviterId, groupId],
+    queryFn: () => getFriendsNotInGroup(inviterId, groupId),
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const friendsAvailable = friendsQuery.data ?? [];
+
+  const toggleFriend = (id: string) => {
+    setSelectedFriends((prev) =>
+      prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id],
+    );
+  };
+
+  const handleInviteSelected = async () => {
+    if (selectedFriends.length === 0) return;
+    setInvitingAll(true);
+    let successCount = 0;
+    for (const friendId of selectedFriends) {
+      try {
+        await inviteToGroup({ groupId, groupName, targetUserId: friendId, inviterId });
+        successCount++;
+      } catch (e: any) {
+        toast.error(e.message || "Could not invite friend");
+      }
+    }
+    setInvitingAll(false);
+    if (successCount > 0) {
+      toast.success(`${successCount} invite${successCount > 1 ? "s" : ""} sent!`);
+      queryClient.invalidateQueries({ queryKey: ["group-members", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["friends-not-in-group", inviterId, groupId] });
+      setSelectedFriends([]);
+      setOpen(false);
+    }
+  };
+
+  const searchMutation = useMutation({
     mutationFn: async () => {
       const user = await findUserByUsername(username.trim().toLowerCase());
       if (!user) throw new Error("No user found with that username.");
       if (user.id === inviterId) throw new Error("You're already in this group.");
-      await inviteToGroup({
-        groupId,
-        groupName,
-        targetUserId: user.id,
-        inviterId,
-      });
+      await inviteToGroup({ groupId, groupName, targetUserId: user.id, inviterId });
     },
     onSuccess: () => {
       toast.success("Invite sent!");
       queryClient.invalidateQueries({ queryKey: ["group-members", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["friends-not-in-group", inviterId, groupId] });
       setOpen(false);
       setUsername("");
     },
     onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
 
+  const handleClose = (o: boolean) => {
+    if (!o) {
+      setSelectedFriends([]);
+      setUsername("");
+      setSearchResults([]);
+      setTab("friends");
+    }
+    setOpen(o);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline">
-          <UserPlus className="mr-1 h-4 w-4" /> Invite
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="p-0 gap-0">
-        <DialogHeader className="px-6 py-4 border-b border-border/50 shrink-0">
-          <DialogTitle>Invite by username</DialogTitle>
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="p-0 gap-0 max-w-sm rounded-3xl overflow-hidden border-slate-100 shadow-2xl bg-white">
+        {/* Handle */}
+        <div className="pt-3 pb-1">
+          <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto" />
+        </div>
+
+        <DialogHeader className="px-5 py-3 border-b border-slate-100 shrink-0">
+          <DialogTitle className="font-display font-bold text-slate-900">Invite to Group</DialogTitle>
         </DialogHeader>
-        <form
-          className="space-y-4 p-6 flex-1 overflow-y-auto"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!username.trim()) return;
-            mutation.mutate();
-          }}
-        >
-          <div className="space-y-1.5">
-            <Label>Username</Label>
-            <Input
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="friend_username"
-              autoCapitalize="none"
-              required
-            />
+
+        {/* Tab Pills */}
+        <div className="flex gap-2 px-5 pt-3 pb-0">
+          {(["friends", "search"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-xs font-bold transition-all capitalize",
+                tab === t
+                  ? "bg-emerald-600 text-white shadow-sm"
+                  : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+              )}
+            >
+              {t === "friends" ? "My Friends" : "Search User"}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Friends Tab ── */}
+        {tab === "friends" && (
+          <div className="px-5 py-3 space-y-2 max-h-[55vh] overflow-y-auto">
+            {friendsQuery.isLoading ? (
+              <div className="py-6 flex justify-center">
+                <Loader2 className="w-5 h-5 text-emerald-500 animate-spin" />
+              </div>
+            ) : friendsAvailable.length === 0 ? (
+              <div className="py-8 text-center">
+                <UserPlus className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-slate-500">No friends to invite</p>
+                <p className="text-xs text-slate-400 mt-0.5">All your friends are already in this group, or you have no friends yet.</p>
+              </div>
+            ) : (
+              <>
+                {friendsAvailable.map((f) => {
+                  const p = f.profile;
+                  const name = p?.full_name?.trim() || p?.username?.replace(/^@/, "") || "Friend";
+                  const uname = p?.username ? `@${p.username.replace(/^@/, "")}` : "";
+                  const checked = selectedFriends.includes(f.friend_id);
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => toggleFriend(f.friend_id)}
+                      className={cn(
+                        "w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-all text-left",
+                        checked
+                          ? "border-emerald-300 bg-emerald-50/60"
+                          : "border-transparent hover:bg-slate-50",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all",
+                          checked ? "bg-emerald-600 border-emerald-600" : "border-slate-300",
+                        )}
+                      >
+                        {checked && <Check className="w-3 h-3 text-white stroke-[3]" />}
+                      </div>
+                      <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm flex items-center justify-center shrink-0">
+                        {p?.avatar_url ? (
+                          <img src={p.avatar_url} alt={name} className="w-full h-full rounded-full object-cover" />
+                        ) : (
+                          name.slice(0, 2).toUpperCase()
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{name}</p>
+                        {uname && <p className="text-[11px] text-slate-400">{uname}</p>}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                <div className="pt-2 pb-1">
+                  <button
+                    type="button"
+                    disabled={selectedFriends.length === 0 || invitingAll}
+                    onClick={handleInviteSelected}
+                    className="w-full h-11 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-emerald-600/25"
+                  >
+                    {invitingAll ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <UserPlus className="w-4 h-4" />
+                    )}
+                    Invite {selectedFriends.length > 0 ? `${selectedFriends.length} Friend${selectedFriends.length > 1 ? "s" : ""}` : "Friends"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
-          <DialogFooter className="pt-2">
-            <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Send invite
-            </Button>
-          </DialogFooter>
-        </form>
+        )}
+
+        {/* ── Search Tab (Search all users) ── */}
+        {tab === "search" && (
+          <div className="px-5 py-4 space-y-3 max-h-[55vh] overflow-y-auto">
+            <div className="relative">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                value={username}
+                onChange={(e) => handleSearchUsers(e.target.value)}
+                placeholder="Search users by name or username..."
+                className="w-full h-11 bg-slate-50 border border-slate-200 rounded-2xl pl-10 pr-10 text-xs sm:text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+              />
+              {isSearching && (
+                <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
+                  <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                </div>
+              )}
+            </div>
+
+            {searchResults.length > 0 ? (
+              <div className="space-y-1.5 pt-1">
+                {searchResults.map((user) => {
+                  const name = user.full_name?.trim() || user.username?.replace(/^@/, "") || "User";
+                  const uname = user.username ? `@${user.username.replace(/^@/, "")}` : "";
+                  const initials = getInitials(name, "U");
+                  const isInvited = invitedUserIds.has(user.id);
+                  const isInvitingThis = invitingUserId === user.id;
+
+                  return (
+                    <div
+                      key={user.id}
+                      className="flex items-center justify-between p-2.5 rounded-2xl bg-slate-50/80 border border-slate-100"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Avatar className="w-9 h-9 rounded-full shrink-0 shadow-2xs">
+                          <AvatarImage src={user.avatar_url || undefined} alt={name} />
+                          <AvatarFallback className="bg-emerald-50 text-emerald-700 font-bold text-xs">
+                            {initials}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{name}</p>
+                          {uname && <p className="text-[10px] text-slate-400 truncate">{uname}</p>}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isInvited || isInvitingThis}
+                        onClick={() => handleInviteUser(user.id)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 transition-all active:scale-95 shrink-0",
+                          isInvited
+                            ? "bg-emerald-100 text-emerald-700"
+                            : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs",
+                        )}
+                      >
+                        {isInvitingThis ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : isInvited ? (
+                          <Check className="w-3.5 h-3.5" />
+                        ) : (
+                          <UserPlus className="w-3.5 h-3.5" />
+                        )}
+                        <span>{isInvited ? "Invited" : "Invite"}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : username.trim() ? (
+              !isSearching && (
+                <div className="py-6 text-center space-y-3">
+                  <p className="text-xs text-slate-400">No users found matching "{username}"</p>
+                  <Button
+                    type="button"
+                    disabled={searchMutation.isPending}
+                    onClick={() => searchMutation.mutate()}
+                    className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-11"
+                  >
+                    {searchMutation.isPending ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    Invite by exact handle "@{username.replace(/^@/, "")}"
+                  </Button>
+                </div>
+              )
+            ) : (
+              <div className="py-8 text-center text-xs text-slate-400">
+                <Search className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                Type a name or @username to search across all Splity users
+              </div>
+            )}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PendingSettlementDropdownRow
+// ─────────────────────────────────────────────────────────────────────────────
+function PendingSettlementDropdownRow({
+  debt,
+  userId,
+  counterpartyName,
+  counterpartyUsername,
+  counterpartyInitials,
+  counterpartyAvatarUrl,
+  groupName,
+  payeeUpiId,
+  groupId,
+  counterpartyId,
+}: {
+  debt: PairwiseDebt;
+  userId: string;
+  counterpartyName: string;
+  counterpartyUsername: string | null;
+  counterpartyInitials: string;
+  counterpartyAvatarUrl?: string | null;
+  groupName: string;
+  payeeUpiId: string | null;
+  groupId: string;
+  counterpartyId: string;
+}) {
+  const isNegative = debt.from === userId;
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  return (
+    <>
+      <div className="flex items-center justify-between p-2 rounded-xl hover:bg-slate-50 transition-colors">
+        <div
+          onClick={() => setSheetOpen(true)}
+          className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer select-none"
+        >
+          <Avatar className="w-8 h-8 rounded-full shrink-0 ring-1 ring-slate-200/60 shadow-2xs">
+            <AvatarImage src={counterpartyAvatarUrl || undefined} alt={counterpartyName} />
+            <AvatarFallback
+              className={cn(
+                "font-bold text-xs",
+                isNegative ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700",
+              )}
+            >
+              {counterpartyInitials}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-slate-800 truncate">{counterpartyName}</p>
+            <p className="text-[10px] text-slate-400">
+              {isNegative ? "You owe" : "Owes you"} • {groupName}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0 pl-1">
+          <p
+            className={cn(
+              "font-display font-bold text-xs",
+              isNegative ? "text-rose-600" : "text-emerald-600",
+            )}
+          >
+            {isNegative ? "-₹" : "+₹"}{debt.amount.toFixed(2)}
+          </p>
+
+          {isNegative ? (
+            <QrPayDialog
+              payeeName={counterpartyName}
+              payeeUpiId={payeeUpiId}
+              amount={debt.amount}
+              note={`Splity settlement`}
+              currentUserId={userId}
+              counterpartyId={counterpartyId}
+              groupId={groupId}
+              trigger={
+                <button
+                  type="button"
+                  className="px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold shadow-xs active:scale-95"
+                >
+                  Pay
+                </button>
+              }
+            />
+          ) : null}
+        </div>
+      </div>
+
+      <ExpenseBreakdownSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        currentUserId={userId}
+        counterpartyId={counterpartyId}
+        displayName={counterpartyName}
+        groupName={groupName}
+        balanceAmount={debt.amount}
+        negative={isNegative}
+        groupId={groupId}
+        payeeUpiId={payeeUpiId}
+      />
+    </>
   );
 }

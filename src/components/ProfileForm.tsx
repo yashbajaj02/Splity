@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Loader2, AtSign, Mail, Smartphone } from "lucide-react";
 import { toast } from "sonner";
-import { updateProfile, findUserByUsername } from "@/lib/api";
+import { updateProfile, findUserByUsername, uploadToCloudinary } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
+import { useRef } from "react";
 import type { Profile } from "@/lib/app-types";
 import { getInitials, getCleanErrorMessage } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -35,6 +36,24 @@ export function ProfileForm({
   const [username, setUsername] = useState(existing.username ?? "");
   const [fullName, setFullName] = useState(existing.full_name ?? "");
   const [upiId, setUpiId] = useState(existing.upi_id ?? "");
+  const [avatarUrl, setAvatarUrl] = useState(existing.avatar_url ?? "");
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setIsUploading(true);
+      const url = await uploadToCloudinary(file, "splity/profiles");
+      setAvatarUrl(url);
+      toast.success("Avatar uploaded successfully");
+    } catch (err: any) {
+      toast.error(err.message || "Upload failed");
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -55,6 +74,7 @@ export function ProfileForm({
         username: cleanUsername,
         full_name: cleanFullName || null,
         upi_id: cleanUpiId,
+        avatar_url: avatarUrl || null,
         email,
       });
 
@@ -87,13 +107,30 @@ export function ProfileForm({
     >
       {showAvatar && (
         <div className="flex flex-col items-center gap-1.5 rounded-xl bg-secondary/45 px-4 py-3 text-center">
-          <Avatar className="h-16 w-16 border border-border">
-            <AvatarImage src={existing.avatar_url ?? undefined} alt={fullName || email} />
-            <AvatarFallback className="bg-card font-display text-lg text-primary">
-              {getInitials(fullName, email)}
-            </AvatarFallback>
-          </Avatar>
-          <p className="text-[11px] text-muted-foreground">Avatar</p>
+          <div 
+            className="relative cursor-pointer group"
+            onClick={() => !isUploading && fileInputRef.current?.click()}
+          >
+            <Avatar className={`h-16 w-16 border border-border transition-opacity ${isUploading ? 'opacity-50' : 'group-hover:opacity-80'}`}>
+              <AvatarImage src={avatarUrl || undefined} alt={fullName || email} />
+              <AvatarFallback className="bg-card font-display text-lg text-primary">
+                {getInitials(fullName, email)}
+              </AvatarFallback>
+            </Avatar>
+            {isUploading && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            )}
+            <input 
+              type="file" 
+              accept="image/*" 
+              className="hidden" 
+              ref={fileInputRef}
+              onChange={handleFileChange}
+            />
+          </div>
+          <p className="text-[11px] text-muted-foreground">Avatar (Tap to change)</p>
         </div>
       )}
       <div className="space-y-1.5">

@@ -1,6 +1,7 @@
-import { useState, memo, useMemo } from "react";
+import { useState, memo, useMemo, useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import {
   Bell,
   Check,
@@ -11,6 +12,18 @@ import {
   UserPlus,
   X,
   ChevronRight,
+  Filter,
+  Calendar,
+  ChevronDown,
+  ArrowUpRight,
+  ArrowDown,
+  Utensils,
+  ShoppingBag,
+  Coffee,
+  Clock,
+  IndianRupee,
+  Handshake,
+  Infinity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
@@ -22,10 +35,14 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   respondToInvite,
+  respondToFriendRequest,
   getMyGroups,
   getAllMyExpenses,
   parseExpenseDescription,
 } from "@/lib/api";
+import { cn, getCleanErrorMessage, getInitials } from "@/lib/utils";
+import { CategoryIcon } from "@/components/CategoryIcon";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { AppNotification, Profile, Expense } from "@/lib/app-types";
 import { Button } from "@/components/ui/button";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
@@ -33,11 +50,12 @@ import { ActivityDetailsSheet } from "@/components/ActivityDetailsSheet";
 import { ExpenseDetailsModal } from "@/components/ExpenseDetailsModal";
 import { PaymentDetailsModal } from "@/components/PaymentDetailsModal";
 import { ActivityExpenseDetailsModal } from "@/components/ActivityExpenseDetailsModal";
-import { cn, getCleanErrorMessage } from "@/lib/utils";
-
-export const Route = createFileRoute("/app/activity")({
-  component: ActivityPage,
-});
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 function formatActivityTime(isoString: string): string {
   const date = new Date(isoString);
@@ -65,30 +83,40 @@ function formatActivityTime(isoString: string): string {
   if (isYesterday) return `Yesterday • ${timeStr}`;
 
   const monthNames = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
   ];
   return `${date.getDate()} ${monthNames[date.getMonth()]} ${date.getFullYear()} • ${timeStr}`;
 }
+
+export const Route = createFileRoute("/app/activity")({
+  component: ActivityPage,
+});
 
 type UnifiedActivityItem =
   | { type: "notification"; id: string; timestamp: string; notification: AppNotification }
   | { type: "expense"; id: string; timestamp: string; expense: Expense };
 
+type DatePresetType =
+  | "all"
+  | "today"
+  | "yesterday"
+  | "last7"
+  | "last30"
+  | "thisMonth"
+  | "custom";
+
 function ActivityPage() {
   const { session } = useAuth();
   const userId = session?.user?.id ?? "";
   const queryClient = useQueryClient();
+
+  const [typeFilter, setTypeFilter] = useState<"all" | "expenses" | "settlements">("all");
+  const [datePreset, setDatePreset] = useState<DatePresetType>("all");
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
+  const [friendRequestsModalOpen, setFriendRequestsModalOpen] = useState(false);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
 
   const notifQuery = useQuery({
     queryKey: ["notifications", userId],
@@ -126,17 +154,11 @@ function ActivityPage() {
       if (e.created_by) ids.add(e.created_by);
       if (e.paid_by) ids.add(e.paid_by);
     }
-    const arr = Array.from(ids);
-    try {
-      arr.sort();
-    } catch (e) {
-      // ignore
-    }
-    return arr;
+    return Array.from(ids);
   }, [notifQuery.data, expensesQuery.data]);
 
   const profilesQuery = useQuery({
-    queryKey: ["profiles", profileIds.join(",")],
+    queryKey: ["profiles", profileIds.sort().join(",")],
     queryFn: () => getProfilesByIds(profileIds),
     enabled: profileIds.length > 0,
     staleTime: 60_000,
@@ -164,6 +186,22 @@ function ActivityPage() {
     onSuccess: (_data, values) => {
       toast.success(values.accept ? "Joined the group!" : "Invite declined");
       invalidate();
+    },
+    onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
+  });
+
+  const respondFriend = useMutation({
+    mutationFn: (values: { notificationId: string; senderId: string; accept: boolean }) =>
+      respondToFriendRequest({
+        notificationId: values.notificationId,
+        senderId: values.senderId,
+        recipientId: userId,
+        accept: values.accept,
+      }),
+    onSuccess: (_data, values) => {
+      toast.success(values.accept ? "Friend request accepted! ✅" : "Friend request declined");
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ["friends", userId] });
     },
     onError: (error: Error) => toast.error(getCleanErrorMessage(error)),
   });
@@ -208,12 +246,20 @@ function ActivityPage() {
     [notifications],
   );
 
+  const pendingFriendRequests = useMemo(
+    () =>
+      notifications.filter(
+        (n) => n.type === "friend_request" && n.status === "pending" && n.sender_id !== userId,
+      ),
+    [notifications, userId],
+  );
+
   const unifiedActivity = useMemo(() => {
     const items: UnifiedActivityItem[] = [];
 
-    // Notifications (exclude those handled by expenses to avoid duplicates)
     for (const n of notifications) {
       if (n.type !== "expense_added" && n.type !== "settlement_confirmed") {
+        if (typeFilter === "expenses") continue;
         items.push({
           type: "notification",
           id: `notif-${n.id}`,
@@ -223,14 +269,16 @@ function ActivityPage() {
       }
     }
 
-    // Expenses
     for (const e of expenses) {
       const { cleanDescription } = parseExpenseDescription(e.description);
       const descLower = cleanDescription.toLowerCase();
       const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
-      
+
+      if (typeFilter === "expenses" && isSettlement) continue;
+      if (typeFilter === "settlements" && !isSettlement) continue;
+
       if (!isSettlement && e.created_by === userId) {
-        continue; // Do NOT show my own newly-created regular expenses
+        continue;
       }
 
       items.push({
@@ -241,62 +289,266 @@ function ActivityPage() {
       });
     }
 
-    // Sort descending
     items.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     return items;
-  }, [notifications, expenses, userId]);
+  }, [notifications, expenses, userId, typeFilter]);
+
+  // Date range filtering
+  const filteredActivity = useMemo(() => {
+    if (datePreset === "all") return unifiedActivity;
+
+    const today = new Date();
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+    return unifiedActivity.filter((item) => {
+      const itemDate = new Date(item.timestamp);
+
+      if (datePreset === "today") {
+        return itemDate >= startOfToday;
+      }
+      if (datePreset === "yesterday") {
+        const startOfYesterday = new Date(startOfToday);
+        startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+        return itemDate >= startOfYesterday && itemDate < startOfToday;
+      }
+      if (datePreset === "last7") {
+        const d = new Date(startOfToday);
+        d.setDate(d.getDate() - 7);
+        return itemDate >= d;
+      }
+      if (datePreset === "last30") {
+        const d = new Date(startOfToday);
+        d.setDate(d.getDate() - 30);
+        return itemDate >= d;
+      }
+      if (datePreset === "thisMonth") {
+        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        return itemDate >= startOfMonth;
+      }
+      if (datePreset === "custom" && customFrom && customTo) {
+        const from = new Date(customFrom);
+        const to = new Date(customTo);
+        to.setHours(23, 59, 59, 999);
+        return itemDate >= from && itemDate <= to;
+      }
+      return true;
+    });
+  }, [unifiedActivity, datePreset, customFrom, customTo]);
+
+  // Group into "Today", "Yesterday", "Earlier"
+  const groupedActivity = useMemo(() => {
+    const today: UnifiedActivityItem[] = [];
+    const yesterday: UnifiedActivityItem[] = [];
+    const earlier: UnifiedActivityItem[] = [];
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    for (const item of filteredActivity) {
+      const d = new Date(item.timestamp);
+      if (d >= startOfToday) {
+        today.push(item);
+      } else if (d >= startOfYesterday) {
+        yesterday.push(item);
+      } else {
+        earlier.push(item);
+      }
+    }
+
+    return { today, yesterday, earlier };
+  }, [filteredActivity]);
+
+  // Date range label for Screen 2 dropdown pill
+  const dateLabel = useMemo(() => {
+    switch (datePreset) {
+      case "today":
+        return "Today";
+      case "yesterday":
+        return "Yesterday";
+      case "last7":
+        return "Last 7 Days";
+      case "last30":
+        return "Last 30 Days";
+      case "thisMonth":
+        return "This Month";
+      case "custom":
+        return customFrom && customTo ? `${customFrom} – ${customTo}` : "Custom Range";
+      default:
+        return "All Time";
+    }
+  }, [datePreset, customFrom, customTo]);
+
+  const isFilterActive = datePreset !== "all" || typeFilter !== "all";
 
   const isLoading = notifQuery.isLoading || expensesQuery.isLoading;
   const isError = notifQuery.isError || expensesQuery.isError;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="space-y-4">
+      {/* Top Bar: Title & Subtitle on left, Actions & Filter button on right */}
+      <div className="flex items-start justify-between pt-1">
         <div>
-          <h1 className="font-display text-2xl font-bold">Activity</h1>
-          <p className="text-sm text-muted-foreground">
-            Group invites, expense updates, and settlement requests.
+          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">
+            Activity
+          </h1>
+          <p className="text-xs text-slate-400 font-medium mt-0.5">
+            Your shared expenses & settlements
           </p>
         </div>
-        {notifications.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            {pendingCount > 0 ? (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={markAllRead.isPending}
-                onClick={() => markAllRead.mutate()}
+
+        <div className="flex items-center gap-2">
+          {/* Always Visible Friend Requests button with realtime badge */}
+          <button
+            type="button"
+            onClick={() => setFriendRequestsModalOpen(true)}
+            className={cn(
+              "relative h-10 px-3 rounded-2xl flex items-center gap-1.5 transition-all active:scale-95 border",
+              pendingFriendRequests.length > 0
+                ? "bg-emerald-50 border-emerald-300 text-emerald-700 shadow-2xs"
+                : "bg-slate-100/80 border-slate-200/50 text-slate-600 hover:bg-slate-200/70",
+            )}
+            title="Friend Requests"
+            aria-label="Friend Requests"
+          >
+            <UserPlus className="w-4 h-4 text-emerald-600 stroke-[2.2]" />
+            <span className="text-xs font-bold hidden sm:inline">Requests</span>
+            {pendingFriendRequests.length > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-xs">
+                {pendingFriendRequests.length}
+              </span>
+            )}
+          </button>
+
+          {notifications.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {pendingCount > 0 && (
+                <button
+                  type="button"
+                  disabled={markAllRead.isPending}
+                  onClick={() => markAllRead.mutate()}
+                  className="px-2.5 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                  title="Mark all notifications as read"
+                >
+                  <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Mark read</span>
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={dismissAll.isPending}
+                onClick={() => dismissAll.mutate()}
+                className="px-2.5 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                title="Dismiss all notifications"
               >
-                <CheckCheck className="mr-1.5 h-4 w-4" />
-                Mark all read
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={dismissAll.isPending}
-              onClick={() => dismissAll.mutate()}
-            >
-              <X className="mr-1.5 h-4 w-4" />
-              Dismiss all
-            </Button>
-          </div>
-        ) : null}
+                <X className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden sm:inline">Dismiss all</span>
+              </button>
+            </div>
+          )}
+
+          {/* Filter Button with Active Indicator Dot */}
+          <button
+            type="button"
+            onClick={() => setDateSheetOpen(true)}
+            className={cn(
+              "w-10 h-10 rounded-2xl flex items-center justify-center transition-all relative border",
+              isFilterActive
+                ? "bg-emerald-50 border-emerald-300 text-emerald-700 shadow-xs"
+                : "bg-slate-100/80 border-slate-200/50 text-slate-600 hover:bg-slate-200/70",
+            )}
+            aria-label="Filter activity"
+          >
+            <Filter className="w-4 h-4 stroke-[2.2]" />
+            {isFilterActive && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-600 ring-2 ring-white" />
+            )}
+          </button>
+        </div>
       </div>
 
+      {/* Screen 1 & 3: Type Filter Pills (All / Expenses / Settlements) */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setTypeFilter("all")}
+          className={cn(
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            typeFilter === "all"
+              ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
+              : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
+          )}
+        >
+          All
+        </button>
+        <button
+          type="button"
+          onClick={() => setTypeFilter("expenses")}
+          className={cn(
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            typeFilter === "expenses"
+              ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
+              : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
+          )}
+        >
+          Expenses
+        </button>
+        <button
+          type="button"
+          onClick={() => setTypeFilter("settlements")}
+          className={cn(
+            "rounded-full px-5 py-2 text-xs font-semibold transition-all",
+            typeFilter === "settlements"
+              ? "bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-md shadow-emerald-600/25"
+              : "bg-slate-100/90 text-slate-600 hover:bg-slate-200/70",
+          )}
+        >
+          Settlements
+        </button>
+      </div>
+
+      {/* Screen 3 in Mockup: Active Date Filter Badge */}
+      {datePreset !== "all" && (
+        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-emerald-50/90 border border-emerald-200/80 text-emerald-900 text-xs font-semibold shadow-2xs">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-emerald-600" />
+            <span>{dateLabel}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDatePreset("all");
+              setCustomFrom("");
+              setCustomTo("");
+            }}
+            className="p-1 hover:bg-emerald-100/80 rounded-lg text-emerald-700 transition-colors"
+            aria-label="Clear date filter"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Activity List grouped by Today, Yesterday, Earlier */}
       {isLoading && unifiedActivity.length === 0 ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-3.5 p-4 rounded-2xl bg-white border border-slate-100" style={{ "--stagger": i } as React.CSSProperties}>
+              <div className="w-11 h-11 rounded-2xl skeleton-shimmer shrink-0" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3.5 w-3/5 rounded-lg skeleton-shimmer" />
+                <div className="h-3 w-2/5 rounded-lg skeleton-shimmer" />
+              </div>
+              <div className="h-4 w-14 rounded-lg skeleton-shimmer" />
+            </div>
+          ))}
         </div>
       ) : isError ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card/50 p-10 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
-            <Bell className="h-6 w-6" />
-          </div>
-          <h3 className="mt-4 font-display text-base font-semibold">Activity could not load</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Please try refreshing the page.</p>
+        <div className="rounded-2xl bg-white border border-slate-100 p-8 text-center">
+          <p className="text-sm font-semibold text-slate-800">Activity could not load</p>
           <Button
-            className="mt-5"
+            className="mt-4"
             size="sm"
             variant="outline"
             onClick={() => {
@@ -307,21 +559,245 @@ function ActivityPage() {
             Try again
           </Button>
         </div>
-      ) : unifiedActivity.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-card/50 p-10 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-secondary text-primary">
-            <Bell className="h-6 w-6" />
-          </div>
-          <h3 className="mt-4 font-display text-base font-semibold">You're all caught up</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Recent activity will show up here.</p>
+      ) : filteredActivity.length === 0 ? (
+        <div className="rounded-2xl bg-white border border-slate-100 p-8 text-center">
+          <p className="text-sm font-semibold text-slate-800">No activity found</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {datePreset === "all" && typeFilter === "all"
+              ? "Transactions will show up here"
+              : "Try adjusting your filters"}
+          </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {unifiedActivity.map((item) => {
-            if (item.type === "notification") {
+        <div className="space-y-4">
+          {groupedActivity.today.length > 0 && (
+            <ActivitySection
+              sectionType="today"
+              items={groupedActivity.today}
+              userId={userId}
+              profileMap={profileMap}
+              groupMap={groupMap}
+              respond={respond}
+              respondFriend={respondFriend}
+              dismiss={dismiss}
+              markRead={markRead}
+            />
+          )}
+
+          {groupedActivity.yesterday.length > 0 && (
+            <ActivitySection
+              sectionType="yesterday"
+              items={groupedActivity.yesterday}
+              userId={userId}
+              profileMap={profileMap}
+              groupMap={groupMap}
+              respond={respond}
+              respondFriend={respondFriend}
+              dismiss={dismiss}
+              markRead={markRead}
+            />
+          )}
+
+          {groupedActivity.earlier.length > 0 && (
+            <ActivitySection
+              sectionType="earlier"
+              items={groupedActivity.earlier}
+              userId={userId}
+              profileMap={profileMap}
+              groupMap={groupMap}
+              respond={respond}
+              respondFriend={respondFriend}
+              dismiss={dismiss}
+              markRead={markRead}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Friend Requests Modal */}
+      <FriendRequestsModal
+        open={friendRequestsModalOpen}
+        onOpenChange={setFriendRequestsModalOpen}
+        requests={pendingFriendRequests}
+        profileMap={profileMap}
+        onAccept={(req) => {
+          respondFriend.mutate({
+            notificationId: req.id,
+            senderId: req.sender_id!,
+            accept: true,
+          });
+        }}
+        onDecline={(req) => {
+          respondFriend.mutate({
+            notificationId: req.id,
+            senderId: req.sender_id!,
+            accept: false,
+          });
+        }}
+        busy={respondFriend.isPending}
+      />
+
+      {/* Screen 2: Expandable Mobile Activity Filter Modal */}
+      <ActivityFilterModal
+        open={dateSheetOpen}
+        onOpenChange={setDateSheetOpen}
+        typeFilter={typeFilter}
+        onSelectType={setTypeFilter}
+        selectedPreset={datePreset}
+        onSelectPreset={setDatePreset}
+        customFrom={customFrom}
+        customTo={customTo}
+        onCustomFromChange={setCustomFrom}
+        onCustomToChange={setCustomTo}
+      />
+    </div>
+  );
+}
+
+function FriendRequestsModal({
+  open,
+  onOpenChange,
+  requests,
+  profileMap,
+  onAccept,
+  onDecline,
+  busy,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  requests: AppNotification[];
+  profileMap: Map<string, Profile>;
+  onAccept: (req: AppNotification) => void;
+  onDecline: (req: AppNotification) => void;
+  busy: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="p-0 gap-0 max-w-sm rounded-3xl overflow-hidden border-slate-100 shadow-2xl bg-white max-h-[85vh] flex flex-col">
+        <div className="pt-3 pb-1">
+          <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto" />
+        </div>
+
+        <DialogHeader className="px-5 py-3 border-b border-slate-100 shrink-0">
+          <DialogTitle className="font-display text-lg font-bold text-slate-900 flex items-center gap-2">
+            Friend Requests
+            <span className="text-emerald-600 text-base">({requests.length})</span>
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="p-4 space-y-3 overflow-y-auto flex-1">
+          {requests.length === 0 ? (
+            <div className="py-10 text-center px-4">
+              <UserPlus className="w-10 h-10 text-slate-300 mx-auto mb-2.5" />
+              <p className="text-sm font-semibold text-slate-700">No pending friend requests</p>
+              <p className="text-xs text-slate-400 mt-1">When someone sends you a friend request, it will appear here.</p>
+            </div>
+          ) : (
+            requests.map((req) => {
+              const sender = req.sender_id ? profileMap.get(req.sender_id) : undefined;
+              const name = sender?.full_name?.trim() || sender?.username?.replace(/^@/, "").trim() || req.sender_username || "Someone";
+              const uname = sender?.username ? `@${sender.username.replace(/^@/, "")}` : "";
+              const initials = getInitials(name, "U");
+
               return (
+                <div key={req.id} className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="h-10 w-10 shrink-0 shadow-2xs">
+                      <AvatarImage src={sender?.avatar_url || undefined} alt={name} />
+                      <AvatarFallback className="bg-emerald-50 text-emerald-700 font-bold text-xs">
+                        {initials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 truncate">{name}</p>
+                      {uname && <p className="text-[10px] text-slate-400 truncate">{uname}</p>}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onAccept(req)}
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onDecline(req)}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-bold flex items-center gap-1 transition-all active:scale-95 disabled:opacity-50"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ActivitySection({
+  sectionType,
+  items,
+  userId,
+  profileMap,
+  groupMap,
+  respond,
+  respondFriend,
+  dismiss,
+  markRead,
+}: {
+  sectionType: "today" | "yesterday" | "earlier";
+  items: UnifiedActivityItem[];
+  userId: string;
+  profileMap: Map<string, Profile>;
+  groupMap: Map<string, string>;
+  respond: any;
+  respondFriend: any;
+  dismiss: any;
+  markRead: any;
+}) {
+  return (
+    <div className="space-y-2">
+      {sectionType === "today" ? (
+        <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 uppercase tracking-widest px-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-badge-pulse" />
+          TODAY
+        </h3>
+      ) : sectionType === "yesterday" ? (
+        <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+          YESTERDAY
+        </h3>
+      ) : (
+        <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+          EARLIER
+        </h3>
+      )}
+
+      <div className="space-y-2">
+        {items.map((item, index) => {
+          if (item.type === "notification") {
+            return (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{
+                  duration: 0.3,
+                  delay: Math.min(index * 0.05, 0.35),
+                  ease: [0.25, 1, 0.5, 1],
+                }}
+              >
                 <NotificationCard
-                  key={item.id}
                   notification={item.notification}
                   senderProfile={
                     item.notification.sender_id
@@ -339,40 +815,383 @@ function ActivityPage() {
                       : undefined
                   }
                   currentUserId={userId}
-                  onAccept={() =>
-                    respond.mutate({
-                      notificationId: item.notification.id,
-                      groupId: item.notification.group_id!,
-                      accept: true,
-                    })
-                  }
-                  onDecline={() =>
-                    respond.mutate({
-                      notificationId: item.notification.id,
-                      groupId: item.notification.group_id!,
-                      accept: false,
-                    })
-                  }
+                  onAccept={() => {
+                    if (item.notification.type === "friend_request") {
+                      respondFriend.mutate({
+                        notificationId: item.notification.id,
+                        senderId: item.notification.sender_id!,
+                        accept: true,
+                      });
+                    } else {
+                      respond.mutate({
+                        notificationId: item.notification.id,
+                        groupId: item.notification.group_id!,
+                        accept: true,
+                      });
+                    }
+                  }}
+                  onDecline={() => {
+                    if (item.notification.type === "friend_request") {
+                      respondFriend.mutate({
+                        notificationId: item.notification.id,
+                        senderId: item.notification.sender_id!,
+                        accept: false,
+                      });
+                    } else {
+                      respond.mutate({
+                        notificationId: item.notification.id,
+                        groupId: item.notification.group_id!,
+                        accept: false,
+                      });
+                    }
+                  }}
                   onDismiss={() => dismiss.mutate(item.notification.id)}
                   onMarkRead={() => markRead.mutate(item.notification.id)}
-                  busy={respond.isPending || dismiss.isPending || markRead.isPending}
+                  busy={respond.isPending || respondFriend.isPending || dismiss.isPending || markRead.isPending}
                 />
-              );
-            } else {
-              return (
+              </motion.div>
+            );
+          } else {
+            return (
+              <motion.div
+                key={item.id}
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{
+                  duration: 0.3,
+                  delay: Math.min(index * 0.05, 0.35),
+                  ease: [0.25, 1, 0.5, 1],
+                }}
+              >
                 <ActivityExpenseCard
-                  key={item.id}
                   expense={item.expense}
                   currentUserId={userId}
+                  groupName={groupMap.get(item.expense.group_id)}
                   creatorProfile={
                     item.expense.created_by ? profileMap.get(item.expense.created_by) : undefined
                   }
                 />
-              );
-            }
-          })}
+              </motion.div>
+            );
+          }
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Screen 2: Expandable, mobile-friendly Activity Filter Modal
+function ActivityFilterModal({
+  open,
+  onOpenChange,
+  typeFilter,
+  onSelectType,
+  selectedPreset,
+  onSelectPreset,
+  customFrom,
+  customTo,
+  onCustomFromChange,
+  onCustomToChange,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  typeFilter: "all" | "expenses" | "settlements";
+  onSelectType: (t: "all" | "expenses" | "settlements") => void;
+  selectedPreset: DatePresetType;
+  onSelectPreset: (p: DatePresetType) => void;
+  customFrom: string;
+  customTo: string;
+  onCustomFromChange: (v: string) => void;
+  onCustomToChange: (v: string) => void;
+}) {
+  const [draftType, setDraftType] = useState<"all" | "expenses" | "settlements">(typeFilter);
+  const [draftPreset, setDraftPreset] = useState<DatePresetType>(selectedPreset);
+
+  // Sync state when opened
+  useEffect(() => {
+    if (open) {
+      setDraftType(typeFilter);
+      setDraftPreset(selectedPreset);
+    }
+  }, [open, typeFilter, selectedPreset]);
+
+  // Compute realistic dynamic dates for subtitles
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  const last7 = new Date();
+  last7.setDate(now.getDate() - 7);
+  const last30 = new Date();
+  last30.setDate(now.getDate() - 30);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+  const monthNames = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+  ];
+  const todayLabel = `${now.getDate()} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+  const yesterdayLabel = `${yesterday.getDate()} ${monthNames[yesterday.getMonth()]} ${yesterday.getFullYear()}`;
+  const last7Label = `${last7.getDate()} ${monthNames[last7.getMonth()]} – ${now.getDate()} ${monthNames[now.getMonth()]}`;
+  const last30Label = `${last30.getDate()} ${monthNames[last30.getMonth()]} – ${now.getDate()} ${monthNames[now.getMonth()]}`;
+  const thisMonthLabel = `1 ${monthNames[now.getMonth()]} – ${endOfMonth.getDate()} ${monthNames[now.getMonth()]}`;
+
+  const presets = [
+    { id: "all" as const, label: "All Time", sub: "Show all activity", isInfinity: true },
+    { id: "today" as const, label: "Today", sub: todayLabel },
+    { id: "yesterday" as const, label: "Yesterday", sub: yesterdayLabel },
+    { id: "last7" as const, label: "Last 7 Days", sub: last7Label },
+    { id: "last30" as const, label: "Last 30 Days", sub: last30Label },
+    { id: "thisMonth" as const, label: "This Month", sub: thisMonthLabel },
+    { id: "custom" as const, label: "Custom Range", sub: "Choose start and end date" },
+  ];
+
+  const handleApply = () => {
+    onSelectType(draftType);
+    onSelectPreset(draftPreset);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="p-0 gap-0 max-w-sm rounded-[28px] overflow-hidden border-slate-100 shadow-2xl bg-white">
+        {/* Top Handle Bar */}
+        <div className="pt-3 pb-1">
+          <div className="w-10 h-1 bg-slate-200 rounded-full mx-auto" />
         </div>
+
+        {/* Modal Header */}
+        <div className="px-6 py-2.5 flex items-center justify-between">
+          <DialogTitle className="font-display text-lg font-bold text-slate-900">
+            Filter Activity
+          </DialogTitle>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="px-6 py-3 space-y-5 max-h-[68vh] overflow-y-auto">
+          {/* Section 1: Activity Type Filter (3 clean cards) */}
+          <div>
+            <h3 className="text-xs font-bold text-slate-900 mb-2.5">
+              Activity Type
+            </h3>
+            <div className="grid grid-cols-3 gap-2.5">
+              {/* Card 1: All */}
+              <button
+                type="button"
+                onClick={() => setDraftType("all")}
+                className={cn(
+                  "p-3 rounded-2xl flex flex-col items-center justify-center transition-all relative border",
+                  draftType === "all"
+                    ? "bg-emerald-50/80 border-emerald-500/50 shadow-xs"
+                    : "bg-white border-slate-100 hover:bg-slate-50/70",
+                )}
+              >
+                <div className="w-9 h-9 rounded-full bg-emerald-100/70 text-emerald-700 flex items-center justify-center mb-1.5">
+                  <IndianRupee className="w-4 h-4 stroke-[2.5]" />
+                </div>
+                <span className="text-xs font-bold text-slate-800">All</span>
+                {draftType === "all" && (
+                  <div className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  </div>
+                )}
+              </button>
+
+              {/* Card 2: Expenses */}
+              <button
+                type="button"
+                onClick={() => setDraftType("expenses")}
+                className={cn(
+                  "p-3 rounded-2xl flex flex-col items-center justify-center transition-all relative border",
+                  draftType === "expenses"
+                    ? "bg-emerald-50/80 border-emerald-500/50 shadow-xs"
+                    : "bg-white border-slate-100 hover:bg-slate-50/70",
+                )}
+              >
+                <div className="w-9 h-9 rounded-full bg-rose-100/70 text-rose-600 flex items-center justify-center mb-1.5">
+                  <Receipt className="w-4 h-4 stroke-[2.2]" />
+                </div>
+                <span className="text-xs font-bold text-slate-800">Expenses</span>
+                {draftType === "expenses" && (
+                  <div className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  </div>
+                )}
+              </button>
+
+              {/* Card 3: Settlements */}
+              <button
+                type="button"
+                onClick={() => setDraftType("settlements")}
+                className={cn(
+                  "p-3 rounded-2xl flex flex-col items-center justify-center transition-all relative border",
+                  draftType === "settlements"
+                    ? "bg-emerald-50/80 border-emerald-500/50 shadow-xs"
+                    : "bg-white border-slate-100 hover:bg-slate-50/70",
+                )}
+              >
+                <div className="w-9 h-9 rounded-full bg-purple-100/70 text-purple-600 flex items-center justify-center mb-1.5">
+                  <Handshake className="w-4 h-4 stroke-[2.2]" />
+                </div>
+                <span className="text-xs font-bold text-slate-800">Settlements</span>
+                {draftType === "settlements" && (
+                  <div className="absolute bottom-1.5 right-1.5 w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                    <Check className="w-2.5 h-2.5 stroke-[3]" />
+                  </div>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Section 2: Date Range Filter */}
+          <div>
+            <h3 className="text-xs font-bold text-slate-900 mb-2.5">
+              Date Range
+            </h3>
+            <div className="space-y-2">
+              {presets.map((p) => {
+                const isSelected = draftPreset === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setDraftPreset(p.id)}
+                    className={cn(
+                      "w-full flex items-center justify-between p-3 rounded-2xl border text-left transition-all",
+                      isSelected
+                        ? "bg-emerald-50/70 border-emerald-300 shadow-2xs"
+                        : "bg-white border-slate-100 hover:bg-slate-50/70",
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className={cn(
+                          "w-9 h-9 rounded-xl flex items-center justify-center shrink-0",
+                          p.isInfinity
+                            ? "bg-emerald-100/70 text-emerald-700"
+                            : "bg-slate-100 text-slate-600",
+                        )}
+                      >
+                        {p.isInfinity ? (
+                          <Infinity className="w-4 h-4 stroke-[2.5]" />
+                        ) : (
+                          <Calendar className="w-4 h-4" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-900 leading-tight">
+                          {p.label}
+                        </p>
+                        <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                          {p.sub}
+                        </p>
+                      </div>
+                    </div>
+
+                    {isSelected && (
+                      <div className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center shadow-xs">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+
+              {draftPreset === "custom" && (
+                <div className="grid grid-cols-2 gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-100 mt-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500">From</label>
+                    <input
+                      type="date"
+                      value={customFrom}
+                      onChange={(e) => onCustomFromChange(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-xs text-slate-800 outline-none mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500">To</label>
+                    <input
+                      type="date"
+                      value={customTo}
+                      onChange={(e) => onCustomToChange(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-xs text-slate-800 outline-none mt-1"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Modal Footer: Apply Filters Button */}
+        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+          <button
+            type="button"
+            onClick={handleApply}
+            className="w-full h-12 rounded-2xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-bold text-sm shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all active:scale-[0.99]"
+          >
+            <Filter className="w-4 h-4" />
+            <span>Apply Filters</span>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ActivityMotionCard({
+  children,
+  onClick,
+  className,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+}) {
+  const [tilt, setTilt] = useState({ x: 0, y: 0, active: false });
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (typeof window !== "undefined" && window.matchMedia("(hover: none)").matches) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = (e.clientX - rect.left) / rect.width - 0.5;
+    const py = (e.clientY - rect.top) / rect.height - 0.5;
+    setTilt({
+      x: -py * 4,
+      y: px * 4,
+      active: true,
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTilt({ x: 0, y: 0, active: false });
+  };
+
+  return (
+    <div
+      onClick={onClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      style={{
+        transform: tilt.active
+          ? `perspective(800px) rotateX(${tilt.x.toFixed(2)}deg) rotateY(${tilt.y.toFixed(2)}deg) translateY(-2.5px)`
+          : "perspective(800px) rotateX(0deg) rotateY(0deg) translateY(0px)",
+        transition: tilt.active
+          ? "transform 0.12s ease-out, box-shadow 0.2s ease-out"
+          : "transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.4s ease-out",
+        transformStyle: "preserve-3d",
+      }}
+      className={cn(
+        "will-change-transform select-none cursor-pointer transition-shadow duration-200 hover:shadow-md",
+        className,
       )}
+    >
+      {children}
     </div>
   );
 }
@@ -380,42 +1199,20 @@ function ActivityPage() {
 const ActivityExpenseCard = memo(function ActivityExpenseCard({
   expense,
   currentUserId,
+  groupName,
   creatorProfile,
 }: {
   expense: Expense;
   currentUserId: string;
+  groupName?: string;
   creatorProfile?: Profile;
 }) {
-  const navigate = useNavigate();
   const { cleanDescription } = parseExpenseDescription(expense.description);
   const descLower = cleanDescription.toLowerCase();
   const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
-
-  let bgClass = "bg-card";
-  let borderClass = "border-border";
-  let iconClass = "bg-secondary text-primary";
-  let amountPrefix = "";
-  let Icon = Receipt;
-
+  const isCash = descLower.includes("cash");
+  const isUpi = descLower.includes("upi") || (!isCash && isSettlement);
   const isPayer = expense.paid_by === currentUserId;
-
-  if (isPayer) {
-    // Money going OUT
-    bgClass = "bg-rose-500/5"; // soft pastel red background
-    borderClass = "border-rose-500/10";
-    iconClass = "bg-rose-500/10 text-rose-600 dark:text-rose-400";
-    amountPrefix = "-";
-  } else if (isSettlement) {
-    // Money coming IN (received settlement)
-    bgClass = "bg-emerald-500/5"; // soft pastel green background
-    borderClass = "border-emerald-500/10";
-    iconClass = "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
-    amountPrefix = "+";
-  }
-
-  let title = cleanDescription;
-  let subtitle = "";
-  const noteText = isSettlement ? (descLower.includes("upi") ? "UPI" : "Cash") : "";
 
   const creatorDisplayName = isPayer
     ? "You"
@@ -423,59 +1220,109 @@ const ActivityExpenseCard = memo(function ActivityExpenseCard({
       creatorProfile?.username?.replace(/^@/, "").trim() ||
       "Someone";
 
+  const expenseDate = new Date(expense.created_at);
+  const timeStr = !isNaN(expenseDate.getTime())
+    ? expenseDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })
+    : "";
+
+  let title = cleanDescription;
+  let subtitle = "";
+  let badgeText: string | null = null;
+  let isOutgoing = false;
+  let isIncoming = false;
+
   if (isSettlement) {
-    Icon = HandCoins;
-    title = descLower.includes("upi") ? "UPI Settlement" : "Cash Settlement";
-    subtitle = isPayer ? "Settled by You" : `Settled with You`;
+    title = isCash ? "Cash Settlement" : "UPI Settlement";
+    badgeText = isCash ? "Cash" : "UPI";
+
+    if (isPayer) {
+      isOutgoing = true;
+      subtitle = `You paid out${timeStr ? ` • ${timeStr}` : ""}${groupName ? ` • ${groupName}` : ""}`;
+    } else {
+      isIncoming = true;
+      subtitle = `${creatorDisplayName} paid you${timeStr ? ` • ${timeStr}` : ""}${groupName ? ` • ${groupName}` : ""}`;
+    }
   } else {
-    subtitle = isPayer ? "Added by You" : `Added by ${creatorDisplayName}`;
+    // Normal expense
+    subtitle = `Paid by ${creatorDisplayName}${timeStr ? ` • ${timeStr}` : ""}${groupName ? ` • ${groupName}` : ""}`;
   }
 
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  const handleCardClick = () => {
-    setDetailsOpen(true);
-  };
-
   return (
     <>
-      <div
-        onClick={handleCardClick}
+      <ActivityMotionCard
+        onClick={() => setDetailsOpen(true)}
         className={cn(
-          "flex items-start sm:items-center gap-3 sm:gap-3.5 rounded-2xl border p-3.5 sm:p-4 shadow-sm transition-all duration-200 cursor-pointer select-none overflow-hidden",
-          "active:scale-[0.98] sm:hover:-translate-y-0.5 sm:hover:shadow-md",
-          bgClass,
-          borderClass,
+          "flex items-center justify-between p-3.5 sm:p-4 rounded-2xl border card-hover",
+          isSettlement
+            ? isOutgoing
+              ? "bg-rose-50 border-rose-100/80 shadow-[0_2px_8px_rgba(239,68,68,0.08)]"
+              : "bg-emerald-50 border-emerald-100/80 shadow-[0_2px_8px_rgba(16,185,129,0.08)]"
+            : "bg-white border-slate-100/90 shadow-[0_2px_8px_rgba(0,0,0,0.03)]",
         )}
       >
-        <div
-          className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl", iconClass)}
-        >
-          <Icon className="h-5 w-5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
-            <span className="font-semibold text-foreground text-sm truncate max-w-full">{title}</span>
+        <div className="flex items-center gap-3.5 min-w-0">
+          {/* Category Icon or Settlement Arrow */}
+          {isSettlement ? (
+            <div
+              className={cn(
+                "w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border",
+                isOutgoing
+                  ? "bg-rose-100 text-rose-600 border-rose-200/60"
+                  : "bg-emerald-100 text-emerald-700 border-emerald-200/60",
+              )}
+            >
+              {isOutgoing ? (
+                <ArrowUpRight className="w-5 h-5 stroke-[2.2]" />
+              ) : (
+                <ArrowDown className="w-5 h-5 stroke-[2.2]" />
+              )}
+            </div>
+          ) : (
+            <CategoryIcon description={cleanDescription} size="md" />
+          )}
+
+          <div className="min-w-0">
+            <p className="font-display font-bold text-sm text-slate-900 truncate">
+              {title}
+            </p>
+            <p className="text-xs text-slate-400 font-medium truncate mt-0.5">
+              {subtitle}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 break-words">{subtitle}</p>
-          <p className="text-[11px] sm:text-xs text-muted-foreground mt-1 font-medium">
-            {formatActivityTime(expense.created_at)}
+        </div>
+
+        {/* Right side: Badge (if settlement) + Amount */}
+        <div className="shrink-0 text-right pl-2 flex flex-col items-end gap-1">
+          {badgeText && (
+            <span
+              className={cn(
+                "px-2 py-0.5 rounded-md text-[10px] font-bold border",
+                isOutgoing
+                  ? "bg-rose-50 text-rose-500 border-rose-100/70"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-100/70",
+              )}
+            >
+              {badgeText}
+            </span>
+          )}
+          <p
+            className={cn(
+              "font-display font-bold text-sm sm:text-base",
+              isOutgoing
+                ? "text-rose-500"
+                : isIncoming || isPayer
+                  ? "text-emerald-600"
+                  : "text-slate-900",
+            )}
+          >
+            {isOutgoing ? "-₹" : isIncoming ? "+₹" : "₹"}
+            {Number(expense.amount).toFixed(2)}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 text-right ml-auto pl-1">
-          <div>
-            <p className="font-display font-bold text-sm sm:text-base text-foreground whitespace-nowrap">
-              {amountPrefix}
-              <CountUpCurrency amount={Number(expense.amount)} />
-            </p>
-            {noteText && (
-              <p className="text-xs text-muted-foreground mt-0.5 font-medium whitespace-nowrap">
-                {noteText}
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
+      </ActivityMotionCard>
+
       {isSettlement ? (
         <PaymentDetailsModal
           open={detailsOpen}
@@ -522,8 +1369,10 @@ const NotificationCard = memo(function NotificationCard({
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const isInvite = notification.type === "group_invite";
+  const isFriendRequest = notification.type === "friend_request";
   const isSettlementRequest = notification.type === "settlement_request";
   const pending = notification.status === "pending";
+  const isAccepted = notification.status === "accepted";
 
   const isSenderCurrentUser = notification.sender_id === currentUserId;
 
@@ -531,6 +1380,7 @@ const NotificationCard = memo(function NotificationCard({
     ? "You"
     : senderProfile?.full_name?.trim() ||
       senderProfile?.username?.replace(/^@/, "").trim() ||
+      notification.sender_username ||
       "Someone";
 
   const counterpartyId = notification.sender_id || "";
@@ -544,6 +1394,16 @@ const NotificationCard = memo(function NotificationCard({
   } else if (isInvite) {
     cardDisplayName = senderDisplayName;
     actionText = "Invited you to join group";
+  } else if (isFriendRequest) {
+    cardDisplayName = senderDisplayName;
+    if (isAccepted && isSenderCurrentUser) {
+      // "You" accepted notification — shouldn't normally appear; just show as read.
+      actionText = "Friend request accepted";
+    } else if (isAccepted) {
+      actionText = "Accepted your friend request";
+    } else {
+      actionText = isSenderCurrentUser ? "You sent a friend request" : "Sent you a friend request";
+    }
   }
 
   const handleCardClick = () => {
@@ -561,23 +1421,31 @@ const NotificationCard = memo(function NotificationCard({
 
   return (
     <>
-      <div
+      <ActivityMotionCard
         onClick={handleCardClick}
         className={cn(
-          "flex items-start sm:items-center gap-3 sm:gap-3.5 rounded-2xl border border-border bg-card p-3.5 sm:p-4 shadow-sm transition-all duration-200 cursor-pointer select-none overflow-hidden",
-          "active:scale-[0.98] sm:hover:-translate-y-0.5 sm:hover:shadow-md",
+          "flex items-start sm:items-center gap-3 sm:gap-3.5 rounded-2xl border border-border bg-card p-3.5 sm:p-4 shadow-sm active:scale-[0.98] overflow-hidden",
         )}
       >
-        <div
-          className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
-            isInvite
-              ? "bg-secondary text-primary"
-              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-          )}
-        >
-          {isInvite ? <UserPlus className="h-5 w-5" /> : <HandCoins className="h-5 w-5" />}
-        </div>
+        {senderProfile?.avatar_url ? (
+          <Avatar className="h-10 w-10 shrink-0 rounded-2xl shadow-2xs">
+            <AvatarImage src={senderProfile.avatar_url} alt={cardDisplayName} />
+            <AvatarFallback className="rounded-2xl bg-emerald-50 text-emerald-700 font-bold text-xs">
+              {getInitials(cardDisplayName, "U")}
+            </AvatarFallback>
+          </Avatar>
+        ) : (
+          <div
+            className={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl",
+              isInvite || isFriendRequest
+                ? "bg-secondary text-primary"
+                : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+            )}
+          >
+            {isInvite || isFriendRequest ? <UserPlus className="h-5 w-5" /> : <HandCoins className="h-5 w-5" />}
+          </div>
+        )}
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 min-w-0">
@@ -592,7 +1460,7 @@ const NotificationCard = memo(function NotificationCard({
             {formatActivityTime(notification.created_at)}
           </p>
 
-          {isInvite && pending ? (
+          {(isInvite || isFriendRequest) && pending && !isSenderCurrentUser ? (
             <div className="mt-3 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
               <Button size="sm" onClick={onAccept} disabled={busy}>
                 <Check className="mr-1 h-4 w-4" /> Accept
@@ -601,7 +1469,30 @@ const NotificationCard = memo(function NotificationCard({
                 <X className="mr-1 h-4 w-4" /> Decline
               </Button>
             </div>
-          ) : null}
+          ) : (
+            <div className="mt-2.5 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              {pending && (
+                <button
+                  type="button"
+                  onClick={onMarkRead}
+                  disabled={busy}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 flex items-center gap-1 transition-colors disabled:opacity-50"
+                  title="Mark as read"
+                >
+                  <Check className="w-3 h-3" /> Mark read
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onDismiss}
+                disabled={busy}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-500 bg-slate-100 hover:bg-slate-200 flex items-center gap-1 transition-colors disabled:opacity-50"
+                title="Dismiss"
+              >
+                <X className="w-3 h-3" /> Dismiss
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0 text-right ml-auto pl-1">
@@ -618,7 +1509,7 @@ const NotificationCard = memo(function NotificationCard({
             <ChevronRight className="h-5 w-5 text-muted-foreground" />
           )}
         </div>
-      </div>
+      </ActivityMotionCard>
 
       {counterpartyId ? (
         <ActivityDetailsSheet
