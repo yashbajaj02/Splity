@@ -12,6 +12,7 @@ export function BalanceCard({
   isLoading?: boolean;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [tilt, setTilt] = useState({ x: 0, y: 0, active: false });
 
   if (isLoading) {
     return (
@@ -36,8 +37,6 @@ export function BalanceCard({
   const net = totalOwe - totalOwed;
   const isNegative = net > 0.005;
   const isPositive = net < -0.005;
-
-  const [tilt, setTilt] = useState({ x: 0, y: 0, active: false });
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     // Only tilt on devices with hover and fine pointers
