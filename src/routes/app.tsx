@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, useNavigate, Link, useRouterState } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Users, Bell, HandCoins, User } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -9,7 +9,6 @@ import { useNetworkStatus } from "@/hooks/use-network-status";
 import { startBackgroundSync } from "@/lib/offline-db";
 import { getProfile, getNotifications, executeSyncAction } from "@/lib/api";
 import { useCachedQuery } from "@/hooks/use-cached-query";
-import { Onboarding } from "@/components/Onboarding";
 import { AppLogo } from "@/components/AppLogo";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +16,10 @@ import { Button } from "@/components/ui/button";
 import { motion, useReducedMotion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 import { cn, getInitials } from "@/lib/utils";
+
+const Onboarding = lazy(() =>
+  import("@/components/Onboarding").then((m) => ({ default: m.Onboarding }))
+);
 
 export const Route = createFileRoute("/app")({
   ssr: false,
@@ -122,12 +125,14 @@ function AppLayout() {
   if (needsOnboarding) {
     const userMeta = session.user.user_metadata;
     return (
-      <Onboarding
-        userId={userId!}
-        email={session.user.email ?? ""}
-        existing={profile ?? undefined}
-        onDone={() => profileQuery.refetch()}
-      />
+      <Suspense fallback={null}>
+        <Onboarding
+          userId={userId!}
+          email={session.user.email ?? ""}
+          existing={profile ?? undefined}
+          onDone={() => profileQuery.refetch()}
+        />
+      </Suspense>
     );
   }
 
@@ -188,7 +193,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
               to={item.to as "/app" | "/app/activity" | "/app/settle" | "/app/profile"}
               className={cn(
                 "relative flex flex-1 flex-col items-center justify-center gap-0.5 py-1 px-1 rounded-2xl text-[11px] font-semibold transition-colors duration-200 select-none active:scale-95",
-                active ? "text-emerald-700" : "text-slate-400 hover:text-slate-600",
+                active ? "text-emerald-700" : "text-slate-500 hover:text-slate-700",
               )}
             >
               {active && (
@@ -212,7 +217,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
                 <Icon
                   className={cn(
                     "h-5 w-5 stroke-[2.2] transition-transform duration-200",
-                    active ? "text-emerald-700 scale-105" : "text-slate-400",
+                    active ? "text-emerald-700 scale-105" : "text-slate-500",
                   )}
                 />
                 {hasBadge && (
@@ -225,7 +230,7 @@ function BottomNav({ pendingCount }: { pendingCount: number }) {
               <span
                 className={cn(
                   "tracking-tight transition-all duration-200",
-                  active ? "font-bold text-emerald-700" : "font-medium text-slate-400",
+                  active ? "font-bold text-emerald-700" : "font-medium text-slate-500",
                 )}
               >
                 {item.label}

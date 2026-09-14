@@ -37,3 +37,24 @@ export function getCleanErrorMessage(error: any): string {
   }
   return msg;
 }
+
+export function getOptimizedCloudinaryUrl(
+  url?: string | null,
+  width: number = 96,
+  height: number = 96,
+): string | undefined {
+  if (!url) return undefined;
+  if (!url.includes("res.cloudinary.com") || !url.includes("/image/upload/")) {
+    return url;
+  }
+  if (
+    url.includes("/image/upload/f_auto") ||
+    url.includes("/image/upload/w_") ||
+    url.includes("/image/upload/c_")
+  ) {
+    return url;
+  }
+  const transform = `f_auto,q_auto,w_${width},h_${height},c_fill`;
+  return url.replace("/image/upload/", `/image/upload/${transform}/`);
+}
+

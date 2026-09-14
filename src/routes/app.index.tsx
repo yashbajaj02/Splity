@@ -1,7 +1,6 @@
-import { getCleanErrorMessage, cn } from "@/lib/utils";
+import { getCleanErrorMessage, cn, getOptimizedCloudinaryUrl } from "@/lib/utils";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, lazy, Suspense } from "react";
 import { useCachedQuery } from "@/hooks/use-cached-query";
 import {
   Plus,
@@ -14,30 +13,23 @@ import {
   Users,
   Loader2,
   X,
-  Upload,
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import { useSettleBalances } from "@/hooks/use-settle-balances";
-import { createGroup, getMyGroups, uploadToCloudinary } from "@/lib/api";
+import { getMyGroups, getProfile } from "@/lib/api";
 import type { Group } from "@/lib/app-types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BalanceCard } from "@/components/BalanceCard";
-import { AddExpenseFab } from "@/components/AddExpenseDialog";
-import { getProfile } from "@/lib/api";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
+
+const AddExpenseDialog = lazy(() =>
+  import("@/components/AddExpenseDialog").then((m) => ({ default: m.AddExpenseDialog }))
+);
+const CreateGroupModal = lazy(() =>
+  import("@/components/CreateGroupModal").then((m) => ({ default: m.CreateGroupModal }))
+);
 
 function getTimeGreeting(): string {
   const h = new Date().getHours();
@@ -66,6 +58,7 @@ function GroupsHome() {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [addExpenseOpen, setAddExpenseOpen] = useState(false);
 
   // Profile query — cache-first so greeting name appears on warm loads
   const profileQuery = useCachedQuery(`profile:${userId}`, {
@@ -90,7 +83,7 @@ function GroupsHome() {
     enabled: !!userId,
   });
 
-  const settleQuery = useSettleBalances(userId);
+  const settleQuery = useSettleBalances(userId, groupsQuery.data);
   const groups = groupsQuery.data ?? [];
 
   const totalOwe = useMemo(
@@ -117,7 +110,7 @@ function GroupsHome() {
         {/* Greeting + Header Row */}
         <div className="pt-2">
           {firstName && (
-            <p className="text-xs font-semibold text-emerald-600 animate-fade-in">
+            <p className="text-xs font-semibold text-emerald-700 animate-fade-in">
               {greeting}, {firstName}! 👋
             </p>
           )}
@@ -139,7 +132,7 @@ function GroupsHome() {
                 "h-9 px-3.5 rounded-full text-white flex items-center gap-1.5 shadow-sm btn-tactile font-semibold text-xs",
                 typeof navigator !== "undefined" && !navigator.onLine
                   ? "bg-slate-400 cursor-not-allowed"
-                  : "bg-emerald-600 hover:bg-emerald-700",
+                  : "bg-emerald-700 hover:bg-emerald-800",
               )}
               aria-label="Create new group"
             >
@@ -158,13 +151,13 @@ function GroupsHome() {
 
         {/* Search bar */}
         <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
           <input
             type="text"
             placeholder="Search groups"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded-2xl py-2.5 pl-10 pr-9 text-sm text-slate-800 placeholder:text-slate-400 outline-none shadow-[var(--shadow-1)] focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:shadow-[0_0_12px_rgba(16,185,129,0.18)] transition-all duration-150"
+            className="w-full bg-white border border-slate-200 rounded-2xl py-2.5 pl-10 pr-9 text-sm text-slate-800 placeholder:text-slate-500 outline-none shadow-[var(--shadow-1)] focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:shadow-[0_0_12px_rgba(16,185,129,0.18)] transition-all duration-150"
           />
           {searchQuery && (
             <button
@@ -217,7 +210,7 @@ function GroupsHome() {
                   <div className="flex items-center gap-3.5 min-w-0">
                     {g.avatar_url ? (
                       <Avatar className="w-12 h-12 rounded-2xl shrink-0 transition-transform duration-200 group-hover:scale-110 shadow-2xs">
-                        <AvatarImage src={g.avatar_url} alt={g.name} />
+                        <AvatarImage src={getOptimizedCloudinaryUrl(g.avatar_url)} alt={g.name} />
                         <AvatarFallback className={`rounded-2xl ${palette.bg}`}>
                           <Icon className="w-5 h-5 stroke-[2.2]" />
                         </AvatarFallback>
@@ -233,7 +226,7 @@ function GroupsHome() {
                       <p className="font-display font-bold text-slate-900 text-sm truncate">
                         {g.name}
                       </p>
-                      <p className="text-xs text-slate-400 font-medium mt-0.5">
+                      <p className="text-xs text-slate-500 font-medium mt-0.5">
                         {g.description ? g.description : "Split expenses"}
                       </p>
                     </div>
@@ -266,135 +259,39 @@ function GroupsHome() {
         )}
       </div>
 
-      <CreateGroupModal
-        userId={userId}
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
-      />
+      {createDialogOpen && (
+        <Suspense fallback={null}>
+          <CreateGroupModal
+            userId={userId}
+            open={createDialogOpen}
+            onOpenChange={setCreateDialogOpen}
+          />
+        </Suspense>
+      )}
 
-      <AddExpenseFab userId={userId} groups={groups.map((g) => ({ id: g.id, name: g.name }))} />
+      {groups.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setAddExpenseOpen(true)}
+          className="fixed bottom-20 right-4 z-20 flex h-12 items-center gap-2 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 shadow-xl transition-all duration-150 active:scale-[0.98] hover:scale-[1.02] hover:shadow-2xl text-xs font-bold"
+          aria-label="Add expense"
+        >
+          <Plus className="h-4 w-4 stroke-[3]" />
+          <span>Add Expense</span>
+        </button>
+      )}
+
+      {addExpenseOpen && (
+        <Suspense fallback={null}>
+          <AddExpenseDialog
+            userId={userId}
+            groups={groups.map((g) => ({ id: g.id, name: g.name }))}
+            open={addExpenseOpen}
+            onOpenChange={setAddExpenseOpen}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
 
-function CreateGroupModal({
-  userId,
-  open,
-  onOpenChange,
-}: {
-  userId: string;
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState("");
-  const [isUploading, setIsUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      setIsUploading(true);
-      const url = await uploadToCloudinary(file, "splity/groups");
-      setAvatarUrl(url);
-      toast.success("Group avatar uploaded");
-    } catch (err: any) {
-      toast.error(err.message || "Upload failed");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const mutation = useMutation({
-    mutationFn: () => createGroup(userId, name.trim(), description.trim() || null, avatarUrl || null),
-    onSuccess: () => {
-      toast.success("Group created!");
-      queryClient.invalidateQueries({ queryKey: ["my-groups", userId] });
-      onOpenChange(false);
-      setName("");
-      setDescription("");
-      setAvatarUrl("");
-    },
-    onError: (e: Error) => toast.error(getCleanErrorMessage(e)),
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="p-0 gap-0 max-w-sm rounded-3xl overflow-hidden border-slate-100 shadow-xl">
-        <DialogHeader className="px-6 py-4 border-b border-slate-100">
-          <DialogTitle className="font-display text-lg font-bold text-slate-900">
-            Create a group
-          </DialogTitle>
-        </DialogHeader>
-        <form
-          className="space-y-4 p-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!name.trim()) return;
-            mutation.mutate();
-          }}
-        >
-          <div className="flex justify-center pb-2">
-            <div 
-              className="relative cursor-pointer group flex flex-col items-center gap-1.5"
-              onClick={() => !isUploading && fileInputRef.current?.click()}
-            >
-              <Avatar className={`h-16 w-16 border border-border transition-opacity ${isUploading ? 'opacity-50' : 'group-hover:opacity-80'}`}>
-                <AvatarImage src={avatarUrl || undefined} alt="Group Avatar" />
-                <AvatarFallback className="bg-emerald-50 font-display text-xl text-emerald-700">
-                  {name ? name.slice(0, 2).toUpperCase() : "GP"}
-                </AvatarFallback>
-              </Avatar>
-              {isUploading && (
-                <div className="absolute top-4 flex items-center justify-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-emerald-600" />
-                </div>
-              )}
-              <span className="text-[11px] text-muted-foreground">Upload Avatar (optional)</span>
-              <input 
-                type="file" 
-                accept="image/*" 
-                className="hidden" 
-                ref={fileInputRef}
-                onChange={handleFileChange}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-slate-600">Group name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Roommates, Goa Trip, Flat 4B..."
-              className="rounded-xl border-slate-200 focus-visible:ring-emerald-500"
-              required
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-slate-600">Description (optional)</Label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="What's this group for?"
-              className="rounded-xl border-slate-200 focus-visible:ring-emerald-500 resize-none"
-              rows={2}
-            />
-          </div>
-          <DialogFooter className="pt-2">
-            <Button
-              type="submit"
-              disabled={mutation.isPending}
-              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-            >
-              {mutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create group
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}

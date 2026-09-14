@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useCachedQuery } from "./use-cached-query";
 import { setCachedData } from "@/lib/offline-db";
 import {
@@ -7,7 +8,7 @@ import {
   getSplitsForGroup,
   getProfilesByIds,
 } from "@/lib/api";
-import type { Expense, ExpenseSplit, Profile } from "@/lib/app-types";
+import type { Expense, ExpenseSplit, Group, Profile } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
 
 export interface Balance {
@@ -18,11 +19,15 @@ export interface Balance {
   amount: number;
 }
 
-export function useSettleBalances(userId: string) {
+export function useSettleBalances(userId: string, preloadedGroups?: Group[]) {
+  const queryClient = useQueryClient();
+
   return useCachedQuery(`settle:${userId}`, {
     queryKey: ["settle", userId] as const,
     queryFn: async () => {
-      const groups = await getMyGroups(userId);
+      // Reuse preloaded groups or existing React Query cache to avoid duplicate network roundtrips
+      const cachedGroups = preloadedGroups ?? queryClient.getQueryData<Group[]>(["my-groups", userId]);
+      const groups = cachedGroups !== undefined ? cachedGroups : await getMyGroups(userId);
       if (!groups || groups.length === 0) {
         const emptyResult = { iOwe: [], owedToMe: [] };
         setCachedData(`settle:${userId}`, emptyResult).catch(() => {});

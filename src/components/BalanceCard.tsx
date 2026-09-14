@@ -177,20 +177,20 @@ export function BalanceCard({
           </p>
           <div className="mt-2 space-y-1.5 pr-12">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-rose-500">You owe</span>
+              <span className="text-xs font-bold text-rose-600">You owe</span>
               <span className="font-display text-base sm:text-lg font-bold text-rose-600 inline-block transition-transform duration-200 origin-right group-hover:scale-[1.02]">
                 ₹{totalOwe.toFixed(2)}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-600">Owed to you</span>
+              <span className="text-xs font-bold text-emerald-700">Owed to you</span>
               <span className="font-display text-base sm:text-lg font-bold text-emerald-600 inline-block transition-transform duration-200 origin-right group-hover:scale-[1.02]">
                 ₹{totalOwed.toFixed(2)}
               </span>
             </div>
           </div>
         </div>
-        <p className="text-[11px] text-slate-400 font-medium">Tap icon to return</p>
+        <p className="text-[11px] text-slate-500 font-medium">Tap icon to return</p>
       </div>
 
       {/* Wave background — continuous left-to-right, color-coded by balance state */}
