@@ -35,6 +35,7 @@ import {
   ImagePlus,
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { format } from "date-fns";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
 import {
@@ -57,7 +58,7 @@ import {
   sendFriendRequest,
   searchUsersByName,
 } from "@/lib/api";
-import { parseExpenseDescription } from "@/lib/api";
+import { parseExpenseDescription, isSettlementExpense } from "@/lib/api";
 import { CategoryIcon } from "@/components/CategoryIcon";
 import type { Expense, ExpenseSplit, PairwiseDebt, Profile, Group, GroupMember, Friend, UserSearchResult } from "@/lib/app-types";
 import { computePairwiseDebts } from "@/lib/debt";
@@ -359,8 +360,7 @@ function GroupDetail() {
 
   const filteredExpenses = expenses.filter((expense) => {
     const { cleanDescription } = parseExpenseDescription(expense.description);
-    const descLower = cleanDescription.toLowerCase();
-    const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+    const isSettlement = isSettlementExpense(cleanDescription);
     if (isSettlement) return false;
 
     const expenseDate = expense.created_at.slice(0, 10);
@@ -373,15 +373,14 @@ function GroupDetail() {
   const hasMoreExpenses = filteredExpenses.length > visibleExpenseCount;
 
   const groupedExpenses = useMemo(() => {
-    const today: typeof visibleExpenses = [];
-    const yesterday: typeof visibleExpenses = [];
-    const earlier: typeof visibleExpenses = [];
+    const groups: { key: string; label: string; items: typeof visibleExpenses }[] = [];
+    const groupMap = new Map<string, typeof visibleExpenses>();
 
     const now = new Date();
     // Use local date strings for comparison to avoid timezone issues
     const pad = (n: number) => n.toString().padStart(2, "0");
     const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    
+
     const yDate = new Date(now);
     yDate.setDate(yDate.getDate() - 1);
     const yesterdayStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
@@ -390,16 +389,31 @@ function GroupDetail() {
       // item.created_at is UTC, convert to local date for comparison
       const itemDate = new Date(item.created_at);
       const itemDateStr = `${itemDate.getFullYear()}-${pad(itemDate.getMonth() + 1)}-${pad(itemDate.getDate())}`;
-      
+
+      let key: string;
+      let label: string;
+
       if (itemDateStr === todayStr) {
-        today.push(item);
+        key = "today";
+        label = "TODAY";
       } else if (itemDateStr === yesterdayStr) {
-        yesterday.push(item);
+        key = "yesterday";
+        label = "YESTERDAY";
       } else {
-        earlier.push(item);
+        key = itemDateStr;
+        const isThisYear = itemDate.getFullYear() === now.getFullYear();
+        label = format(itemDate, isThisYear ? "d MMM" : "d MMM yyyy").toUpperCase();
       }
+
+      let list = groupMap.get(key);
+      if (!list) {
+        list = [];
+        groupMap.set(key, list);
+        groups.push({ key, label, items: list });
+      }
+      list.push(item);
     }
-    return { today, yesterday, earlier };
+    return groups;
   }, [visibleExpenses]);
 
   const splitsByExpense: Record<string, ExpenseSplit[]> = {};
@@ -887,14 +901,26 @@ function GroupDetail() {
           </div>
         ) : (
           <div className="space-y-4">
-            {groupedExpenses.today.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 uppercase tracking-widest px-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-badge-pulse" />
-                  TODAY
+            {groupedExpenses.map((group) => (
+              <div key={group.key} className="space-y-2">
+                <h3
+                  className={cn(
+                    "flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest px-1",
+                    group.key === "today" ? "text-emerald-700" : "text-slate-400"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "w-1.5 h-1.5 rounded-full",
+                      group.key === "today"
+                        ? "bg-emerald-600 animate-badge-pulse"
+                        : "bg-slate-300"
+                    )}
+                  />
+                  {group.label}
                 </h3>
                 <div className="space-y-2">
-                  {groupedExpenses.today.map((expense, index) => (
+                  {group.items.map((expense, index) => (
                     <motion.div
                       key={expense.id}
                       initial={{ opacity: 0, y: 12 }}
@@ -922,81 +948,7 @@ function GroupDetail() {
                   ))}
                 </div>
               </div>
-            )}
-
-            {groupedExpenses.yesterday.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                  YESTERDAY
-                </h3>
-                <div className="space-y-2">
-                  {groupedExpenses.yesterday.map((expense, index) => (
-                    <motion.div
-                      key={expense.id}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: 0.25,
-                        delay: Math.min(index * 0.05, 0.35),
-                        ease: [0.25, 1, 0.5, 1],
-                      }}
-                    >
-                      <ExpenseRow
-                        expense={expense}
-                        currentUserId={userId}
-                        creatorDisplayName={nameOfDisplay(expense.created_by)}
-                        canRemove={canDeleteExpense(expense, userId)}
-                        removeBusy={removeExpenseMutation.isPending}
-                        onRemove={() => removeExpenseMutation.mutate(expense.id)}
-                        initialSplits={splitsByExpense[expense.id]}
-                        acceptedMembers={acceptedMembers.map((member) => ({
-                          id: member.user_id,
-                          name: nameOf(member.user_id),
-                        }))}
-                      />
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {groupedExpenses.earlier.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-widest px-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
-                  EARLIER
-                </h3>
-                <div className="space-y-2">
-                  {groupedExpenses.earlier.map((expense, index) => (
-                    <motion.div
-                      key={expense.id}
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{
-                        duration: 0.25,
-                        delay: Math.min(index * 0.05, 0.35),
-                        ease: [0.25, 1, 0.5, 1],
-                      }}
-                    >
-                      <ExpenseRow
-                        expense={expense}
-                        currentUserId={userId}
-                        creatorDisplayName={nameOfDisplay(expense.created_by)}
-                        canRemove={canDeleteExpense(expense, userId)}
-                        removeBusy={removeExpenseMutation.isPending}
-                        onRemove={() => removeExpenseMutation.mutate(expense.id)}
-                        initialSplits={splitsByExpense[expense.id]}
-                        acceptedMembers={acceptedMembers.map((member) => ({
-                          id: member.user_id,
-                          name: nameOf(member.user_id),
-                        }))}
-                      />
-                    </motion.div>
-                  ))}
-                </div>
-              </div>
-            )}
+            ))}
 
             {hasMoreExpenses && (
               <button
@@ -1390,8 +1342,7 @@ const ExpenseRow = memo(function ExpenseRow({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const canShowActions = expense.created_by === currentUserId && canRemove;
   const { cleanDescription } = parseExpenseDescription(expense.description);
-  const descLower = cleanDescription.toLowerCase();
-  const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+  const isSettlement = isSettlementExpense(cleanDescription);
 
   const d = new Date(expense.created_at);
   const timeStr = !isNaN(d.getTime())

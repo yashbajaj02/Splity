@@ -9,6 +9,7 @@ import {
   getProfilesByIds,
   parseExpenseDescription,
   getCleanMemberName,
+  isSettlementExpense,
 } from "@/lib/api";
 import type { AppNotification, Expense, ExpenseSplit, Profile } from "@/lib/app-types";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -99,9 +100,8 @@ export function ActivityDetailsSheet({
   if (isPayment) {
     const notifTime = new Date(notification.created_at).getTime();
     displayExpenses = relevantExpenses.filter((exp) => {
-      const isSet =
-        exp.description.toLowerCase().includes("settlement") ||
-        exp.description.toLowerCase().includes("paid");
+      const { cleanDescription } = parseExpenseDescription(exp.description);
+      const isSet = isSettlementExpense(cleanDescription);
       if (isSet) return false;
       const t = new Date(exp.created_at).getTime();
       return t <= notifTime;
@@ -109,9 +109,8 @@ export function ActivityDetailsSheet({
 
     if (displayExpenses.length === 0) {
       displayExpenses = relevantExpenses.filter((exp) => {
-        const isSet =
-          exp.description.toLowerCase().includes("settlement") ||
-          exp.description.toLowerCase().includes("paid");
+        const { cleanDescription } = parseExpenseDescription(exp.description);
+        const isSet = isSettlementExpense(cleanDescription);
         return !isSet;
       });
     }
@@ -124,9 +123,8 @@ export function ActivityDetailsSheet({
     }
   } else {
     displayExpenses = relevantExpenses.filter((exp) => {
-      const isSet =
-        exp.description.toLowerCase().includes("settlement") ||
-        exp.description.toLowerCase().includes("paid");
+      const { cleanDescription } = parseExpenseDescription(exp.description);
+      const isSet = isSettlementExpense(cleanDescription);
       return !isSet;
     });
   }

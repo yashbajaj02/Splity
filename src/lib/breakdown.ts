@@ -1,4 +1,5 @@
 import type { Expense, ExpenseSplit } from "./app-types";
+import { getCleanExpenseDescription, isSettlementExpense } from "./api";
 
 export interface PaymentHistoryEntry {
   amount: number;
@@ -38,8 +39,8 @@ export function computeExpenseBreakdown(
 
   // First pass: aggregate all settlements
   for (const exp of relevantExpenses) {
-    const descLower = exp.description.toLowerCase();
-    const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+    const cleanDesc = getCleanExpenseDescription(exp.description);
+    const isSettlement = isSettlementExpense(cleanDesc);
 
     if (isSettlement) {
       if (exp.paid_by === currentUserId) {
@@ -73,8 +74,8 @@ export function computeExpenseBreakdown(
 
   // Second pass: Calculate remaining shares for non-settlement expenses
   for (const exp of relevantExpenses) {
-    const descLower = exp.description.toLowerCase();
-    const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+    const cleanDesc = getCleanExpenseDescription(exp.description);
+    const isSettlement = isSettlementExpense(cleanDesc);
 
     if (isSettlement) continue;
 

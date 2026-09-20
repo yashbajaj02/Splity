@@ -20,6 +20,7 @@ import {
   getProfilesByIds,
   parseExpenseDescription,
   getCleanMemberName,
+  isSettlementExpense,
 } from "@/lib/api";
 import type { Expense, ExpenseSplit, Profile } from "@/lib/app-types";
 import { CountUpCurrency } from "@/components/CountUpCurrency";
@@ -168,7 +169,7 @@ export function ExpenseDetailsModal({
 
   const { cleanDescription, splitNotes } = parseExpenseDescription(expense.description);
   const descLower = cleanDescription.toLowerCase();
-  const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+  const isSettlement = isSettlementExpense(cleanDescription);
   const isUpi = descLower.includes("upi") || descLower.includes("online");
   const paymentMethod = isUpi ? "UPI Payment" : "Cash Payment";
 

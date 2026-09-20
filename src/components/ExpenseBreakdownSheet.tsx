@@ -10,7 +10,7 @@ import {
   DrawerTitle,
   DrawerFooter,
 } from "@/components/ui/drawer";
-import { getMyGroups, getGroupExpenses, getSplitsForGroup, getProfilesByIds } from "@/lib/api";
+import { getMyGroups, getGroupExpenses, getSplitsForGroup, getProfilesByIds, isSettlementExpense } from "@/lib/api";
 import type { Expense, ExpenseSplit } from "@/lib/app-types";
 import { computePairwiseLedger } from "@/lib/ledger";
 import { QrPayDialog } from "@/components/QrPayDialog";
@@ -19,8 +19,7 @@ import { PaidDialog } from "@/components/PaidDialog";
 function getExpenseIcon(description: string): string {
   const desc = description.toLowerCase();
   if (
-    desc.includes("settlement") ||
-    desc.includes("paid") ||
+    isSettlementExpense(desc) ||
     desc.includes("upi") ||
     desc.includes("cash")
   )

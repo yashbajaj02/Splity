@@ -51,6 +51,11 @@ export function getCleanExpenseDescription(rawDescription: string): string {
   return clean.trim();
 }
 
+export function isSettlementExpense(cleanDescription: string): boolean {
+  const descLower = cleanDescription.toLowerCase();
+  return descLower === "upi settlement" || descLower === "cash settlement";
+}
+
 export function parseExpenseDescription(rawDescription: string): {
   cleanDescription: string;
   splitNotes: Record<string, string>;
@@ -529,7 +534,7 @@ export async function addExpense(opts: {
   }
 
   // 3. Send notifications asynchronously without failing the expense operation
-  if (!cleanDescription.toLowerCase().includes("settlement")) {
+  if (!isSettlementExpense(cleanDescription)) {
     Promise.all([getGroup(opts.groupId), getProfile(opts.createdBy), getGroupMembers(opts.groupId)])
       .then(async ([group, creator, members]) => {
         const involvedUserIds = new Set(opts.splits.map((s) => s.userId));

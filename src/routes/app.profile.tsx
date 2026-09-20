@@ -38,6 +38,8 @@ import {
   searchUsersByName,
   uploadToCloudinary,
   updateProfile,
+  getCleanExpenseDescription,
+  isSettlementExpense,
 } from "@/lib/api";
 import { getInitials, cn } from "@/lib/utils";
 import { ProfileForm } from "@/components/ProfileForm";
@@ -392,8 +394,7 @@ function ProfilePage() {
   const groupsCount = groupsQuery.data?.length ?? 0;
   const allExpenses = expensesQuery.data ?? [];
   const regularExpensesCount = allExpenses.filter((e) => {
-    const d = e.description.toLowerCase();
-    return !d.includes("settlement") && !d.includes("paid");
+    return !isSettlementExpense(getCleanExpenseDescription(e.description));
   }).length;
   const friendsCount = friendsQuery.data?.length ?? 0;
   const friends = friendsQuery.data ?? [];

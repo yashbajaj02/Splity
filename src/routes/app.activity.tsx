@@ -40,6 +40,7 @@ import {
   getAllMyExpenses,
   parseExpenseDescription,
   getPendingFriendRequests,
+  isSettlementExpense,
 } from "@/lib/api";
 import { cn, getCleanErrorMessage, getInitials } from "@/lib/utils";
 import { CategoryIcon } from "@/components/CategoryIcon";
@@ -340,8 +341,7 @@ function ActivityPage() {
     if (typeFilter !== "friend_requests") {
       for (const e of expenses) {
         const { cleanDescription } = parseExpenseDescription(e.description);
-        const descLower = cleanDescription.toLowerCase();
-        const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+        const isSettlement = isSettlementExpense(cleanDescription);
 
         if (typeFilter === "expenses" && isSettlement) continue;
         if (typeFilter === "settlements" && !isSettlement) continue;
@@ -1302,8 +1302,8 @@ const ActivityExpenseCard = memo(function ActivityExpenseCard({
   creatorProfile?: Profile;
 }) {
   const { cleanDescription } = parseExpenseDescription(expense.description);
+  const isSettlement = isSettlementExpense(cleanDescription);
   const descLower = cleanDescription.toLowerCase();
-  const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
   const isCash = descLower.includes("cash");
   const isUpi = descLower.includes("upi") || (!isCash && isSettlement);
   const isPayer = expense.paid_by === currentUserId;

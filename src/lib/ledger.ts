@@ -1,4 +1,5 @@
 import type { Expense, ExpenseSplit } from "./app-types";
+import { isSettlementExpense } from "./api";
 
 export function getCleanExpenseDescription(rawDescription: string): string {
   if (!rawDescription) return "";
@@ -60,8 +61,7 @@ export function computePairwiseLedger(
     const splits = splitsByExpense[exp.id] ?? [];
     const desc = exp.description || "";
     const cleanDesc = getCleanExpenseDescription(desc);
-    const descLower = cleanDesc.toLowerCase();
-    const isSettlement = descLower.includes("settlement") || descLower.includes("paid");
+    const isSettlement = isSettlementExpense(cleanDesc);
 
     let netDelta = 0;
     let yourShare = 0;
